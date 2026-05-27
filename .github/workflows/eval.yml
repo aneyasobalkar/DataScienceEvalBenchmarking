@@ -1,0 +1,41 @@
+name: Run DABstep Eval
+
+on:
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harbor
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install harbor
+
+      - name: Run all 30 trials
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          source .venv/bin/activate
+          for task in samples/dabstep-*; do
+            for trial in 1 2 3; do
+              echo "=== $task trial $trial ==="
+              harbor run -p "$task" -a terminus-2 -m gemini/gemini-3.5-flash -y || true
+            done
+          done
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: jobs/
