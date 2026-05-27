@@ -4,3 +4,7 @@ dabstep/
 jobs/
 run_eval.log
 eval_summary.txt
+logs/
+
+# Bengali fake-news: raw/processed subdirs not needed by solve.py (241-712 MB each)
+samples/bengali-fake-news/environment/data/data/
