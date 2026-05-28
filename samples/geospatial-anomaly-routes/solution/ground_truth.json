@@ -1,46 +1,11 @@
 {
-  "anomalous_route_ids": [
-    600,
-    601,
-    602,
-    603,
-    604
-  ],
-  "anomaly_details": {
-    "600": {
-      "od_pair": "(39.99, 116.27)->(40.06, 116.27)",
-      "normal_mean_m": 7838.8,
-      "normal_std_m": 45.3,
-      "anomaly_length_m": 8140.6,
-      "z_score": 6.67
-    },
-    "601": {
-      "od_pair": "(39.99, 116.27)->(39.95, 116.27)",
-      "normal_mean_m": 4482.9,
-      "normal_std_m": 27.5,
-      "anomaly_length_m": 4652.1,
-      "z_score": 6.16
-    },
-    "602": {
-      "od_pair": "(40.06, 116.27)->(39.95, 116.27)",
-      "normal_mean_m": 12318.0,
-      "normal_std_m": 79.2,
-      "anomaly_length_m": 13097.8,
-      "z_score": 9.85
-    },
-    "603": {
-      "od_pair": "(39.99, 116.37)->(40.06, 116.37)",
-      "normal_mean_m": 7851.6,
-      "normal_std_m": 53.3,
-      "anomaly_length_m": 8334.7,
-      "z_score": 9.07
-    },
-    "604": {
-      "od_pair": "(39.95, 116.42)->(40.05, 116.42)",
-      "normal_mean_m": 11221.3,
-      "normal_std_m": 80.5,
-      "anomaly_length_m": 11907.2,
-      "z_score": 8.52
-    }
-  }
+  "anomalous_route_ids": [600, 601, 602, 603, 604],
+  "n_anomalous_routes": 5,
+  "od_pairs": [
+    "Chaoyang→Haidian",
+    "Dongcheng→Fengtai",
+    "Xicheng→Chaoyang",
+    "Shijingshan→Xicheng",
+    "Haidian→Dongcheng"
+  ]
 }

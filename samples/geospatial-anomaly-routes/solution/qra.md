@@ -1,38 +1,38 @@
-# QRA: Geospatial Route Anomaly Detection
+# QRA: Anomalous Route Detection — Beijing GPS Trajectories
 
 ## Question
 
-Detect anomalous GPS routes in a Beijing trajectory dataset. Routes are anomalous if their Haversine path length is more than 3 standard deviations above the mean for the same origin-destination (OD) pair.
+Given GPS trajectory data from delivery drivers in Beijing with `time_of_day` and `driver_experience` metadata, identify the 5 anomalous routes that take a significantly longer path than expected for their origin–destination pair.
 
 ## Reasoning
 
-1. Load `trajectories.csv` (25,005 rows, 605 routes, columns: route_id, user_id, point_index, latitude, longitude, is_anomaly — ignore is_anomaly)
-2. For each route, sort by point_index and sum Haversine distances between consecutive GPS points → `path_length_m`
-3. Snap each route's first and last point to a 0.01° grid (round lat/lon to 2 decimal places) → OD pair key
-4. Group routes by OD pair; for each OD pair with >= 3 routes: compute mean and std of path lengths
-5. Flag any route with z-score = (path_length - mean) / std > 3.0 as anomalous
-6. The 5 injected anomalous routes (IDs 600–604) have z-scores of 3.6–4.1 (vs normal max of ~3.0)
-7. Normal routes take 1.1–1.2× the straight-line distance; anomalies take ~1.5–3× the normal mean
-8. Haversine formula (spherical earth) is required; Euclidean distance gives incorrect results at this scale
-
-Key insight: grouping by OD pair is critical. Without it, anomalies blend into the global distribution (5–23km). With OD grouping, each pair has tight variance (CV ~1.5%), making anomalies obvious (z > 3.0).
+1. Use **Haversine formula** for geographic distances — Euclidean distance on lat/lon is incorrect.
+2. Compute total path length per route by summing Haversine distances between consecutive GPS points.
+3. Snap start/end coordinates to a 0.01-degree grid (round to 2 decimal places) to identify OD pairs.
+4. **Naive z-score (OD pair only) fails completely** — confounder variance (senior drivers take 30% longer routes; evening adds 20%) creates an overall std of ~2,500 m per OD pair, pushing all anomaly z-scores to ~1.07, well below 2.0.
+5. **Stratify by OD pair × time_of_day × driver_experience** — within each stratum the std drops to ~100 m (±1%), exposing anomalies at z ≈ 4.4.
+6. Use **z > 3.5** as the detection threshold. With 20 routes per stratum, natural outliers can reach z ≈ 3.1; threshold 3.5 eliminates all false positives while anomaly z-scores of 4.4+ are clearly above it.
 
 ## Answer
 
 ```json
 {
   "anomalous_route_ids": [600, 601, 602, 603, 604],
-  "method": "haversine path length + z-score per OD pair (threshold z > 3.0)",
-  "od_pairs_analyzed": 30
+  "n_anomalous_routes": 5,
+  "distance_method": "haversine",
+  "confounders_controlled": ["time_of_day", "driver_experience"],
+  "detection_method": "stratified z-score > 3.5 per OD×time_of_day×driver_experience stratum"
 }
 ```
 
-### Ground Truth Anomaly Details
+### Per-OD statistics
 
-| Route ID | OD Pair | Normal Mean (m) | Normal Std (m) | Anomaly Length (m) | Z-score |
-|----------|---------|----------------|---------------|-------------------|---------|
-| 600 | (39.92, 116.47)→(40.05, 116.42) | 15,187 | 104 | 15,841 | 6.3 |
-| 601 | (39.99, 116.37)→(40.06, 116.37) | 7,839 | 45 | 8,141 | 6.7 |
-| 602 | (40.06, 116.47)→(39.90, 116.32) | 12,318 | 79 | 13,098 | 9.8 |
-| 603 | (39.99, 116.27)→(39.95, 116.27) | 4,483 | 27 | 4,652 | 6.2 |
-| 604 | (39.95, 116.42)→(40.05, 116.42) | 11,221 | 81 | 11,907 | 8.5 |
+| OD pair | Direct | Anomaly path | jm mean±std | Naive z | Strat z |
+|---|---|---|---|---|---|
+| Chaoyang→Haidian | 12,972 m | 19,564 m | 13,536±116 m | 1.08 | 4.45 |
+| Dongcheng→Fengtai | 8,506 m | 11,653 m | 8,771±51 m | 1.08 | 4.46 |
+| Xicheng→Chaoyang | 9,356 m | 14,223 m | 9,848±140 m | 1.05 | 4.42 |
+| Shijingshan→Xicheng | 12,342 m | 18,775 m | 13,013±164 m | 1.07 | 4.43 |
+| Haidian→Dongcheng | 11,125 m | 16,076 m | 11,537±102 m | 1.06 | 4.45 |
+
+Each anomalous route is placed in the junior×morning stratum and is 1.45× the stratum base length — within the "subtle" 1.3–1.5× range — but clearly anomalous (z ≈ 4.4) once confounders are removed.

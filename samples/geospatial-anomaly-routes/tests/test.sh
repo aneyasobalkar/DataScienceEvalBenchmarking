@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-echo "=== Geospatial Route Anomaly Detection Verifier ==="
+echo "=== Geospatial Anomaly Routes Verifier ==="
 mkdir -p /logs/verifier
 export GEMINI_API_KEY=$(harbor config get gemini-api-key 2>/dev/null || echo "${GEMINI_API_KEY:-}")
 source /opt/venv/bin/activate
@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"precision":0,"recall":0,"f1_score":0,"true_positives":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"exact_match_check":0,"haversine_check":0,"count_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results.json found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -25,43 +25,48 @@ try:
         results = json.load(f)
 except Exception as e:
     print(f"Error reading results.json: {e}")
-    out = {"precision":0,"recall":0,"f1_score":0,"true_positives":0,
+    out = {"exact_match_check":0,"haversine_check":0,"count_check":0,
            "Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}
     with open("/logs/verifier/reward.json","w") as f: json.dump(out, f, indent=2)
     with open("/logs/verifier/reward.txt","w") as f: f.write("0")
     with open("/logs/verifier/judge_reasoning.txt","w") as f: f.write(str(e))
     sys.exit(1)
 
+# ── Part 1: Deterministic checks ──────────────────────────────────────────────
 predicted = results.get("anomalous_route_ids", [])
 if not isinstance(predicted, list):
     predicted = []
 predicted_set = set(int(x) for x in predicted)
 gt_set = set(GROUND_TRUTH)
 
+exact_match_check = int(predicted_set == gt_set)
+distance_method   = str(results.get("distance_method", "")).strip().lower()
+haversine_check   = int("haversine" in distance_method)
+count_check       = int(results.get("n_anomalous_routes", -1) == 5)
+
 tp = len(predicted_set & gt_set)
 fp = len(predicted_set - gt_set)
 fn = len(gt_set - predicted_set)
 
-precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+print(f"Predicted:     {sorted(predicted_set)}")
+print(f"Ground truth:  {sorted(gt_set)}")
+print(f"TP={tp}  FP={fp}  FN={fn}")
+print(f"Exact match:   {'PASS' if exact_match_check else 'FAIL'}")
+print(f"Haversine:     {'PASS' if haversine_check   else 'FAIL'} ({distance_method!r})")
+print(f"Count check:   {'PASS' if count_check       else 'FAIL'}")
 
-print(f"Predicted: {sorted(predicted_set)}")
-print(f"Ground truth: {sorted(gt_set)}")
-print(f"TP={tp}, FP={fp}, FN={fn}")
-print(f"Precision={precision:.3f}, Recall={recall:.3f}, F1={f1:.3f}")
+det_pass = int(exact_match_check and haversine_check and count_check)
+print(f"Deterministic: {'PASS' if det_pass else 'FAIL'}")
 
-det_pass = int(f1 >= 0.6)
-print(f"Deterministic check: {'PASS' if det_pass else 'FAIL'} (need F1 >= 0.6)")
-
+# ── Part 2: LLM-as-judge ──────────────────────────────────────────────────────
 Sreason = 0.0; Scode = 0.0; Sresult = 0.0
 weighted_score = 0.0
-judge_reasoning = "Deterministic check failed — LLM judge skipped"
+judge_reasoning = "Deterministic checks failed — LLM judge skipped"
 
 if det_pass:
     trajectory_path = "/logs/agent/trajectory.json"
     if not os.path.exists(trajectory_path):
-        Sreason = 0.8; Scode = 0.8; Sresult = 0.8
+        Sreason = 8.0; Scode = 8.0; Sresult = 8.0
         weighted_score = round(Sreason*0.3 + Scode*0.3 + Sresult*0.4, 4)
         judge_reasoning = "No agent trajectory — judge skipped (oracle/nop run)"
         print("LLM judge: skipped (no trajectory)")
@@ -74,42 +79,42 @@ if det_pass:
 
             results_str = json.dumps(results, ensure_ascii=False)[:3000]
 
+            confounders = results.get("confounders_controlled", [])
+
             judge_prompt = (
-                "You are evaluating a data science agent on a geospatial route anomaly detection task. "
-                "The dataset contains 605 GPS routes in Beijing, with 5 synthetic anomalous routes "
-                "injected. The anomalous routes take dramatically longer detours between the same "
-                "origin-destination pair as normal routes.\n\n"
-                "The reference solution approach is documented below. "
+                "You are evaluating a data science agent on a geospatial anomaly detection task. "
+                "The dataset contains GPS trajectories from 605 Beijing delivery routes. "
+                "There are two confounders that must be controlled before z-score detection: "
+                "time_of_day (evening routes are 20% longer) and driver_experience (senior drivers "
+                "take 30% longer routes). A naive z-score WITHOUT stratification produces a per-OD std "
+                "of ~2,500 m, pushing all anomaly z-scores to ~1.07 — completely invisible. "
+                "After stratifying by OD pair × time_of_day × driver_experience, the within-stratum "
+                "std drops to ~100 m and anomaly z-scores reach ~4.4. The correct threshold is z > 3.5 "
+                "(with 20 routes per stratum, natural outliers can reach z ≈ 3.1).\n\n"
                 "Score the agent on three dimensions, each 0-1:\n\n"
-                "QRA Reference:\n\n"
-                "## Question\n"
-                "Detect anomalous GPS routes in Beijing trajectory data. Routes are anomalous if their "
-                "Haversine path length is more than 3 standard deviations above the mean for the same "
-                "origin-destination (OD) pair.\n\n"
-                "## Reasoning\n"
-                "1. Load trajectories.csv (25,005 rows, 605 routes)\n"
-                "2. For each route, sum Haversine distances between consecutive GPS points → path_length_m\n"
-                "3. Snap start/end coords to 0.01-degree grid cells (round to 2dp) → OD pair key\n"
-                "4. For each OD pair with >= 3 routes: compute mean and std of path lengths\n"
-                "5. Flag routes where z-score = (path_length - mean) / std > 3.0 as anomalous\n"
-                "6. The 5 anomalous routes (IDs 600-604) have z-scores of 3.6-4.1 vs normal routes max z=3.0\n"
-                "7. Critical: must use Haversine (spherical earth) not Euclidean distance for accuracy\n"
-                "8. Normal routes take 1.1-1.2x the straight-line distance; anomalies take 1.5-3x normal mean\n\n"
-                "## Answer\n"
-                '{"anomalous_route_ids": [600, 601, 602, 603, 604], '
-                '"method": "haversine path length + z-score per OD pair (threshold z > 3.0)", '
-                '"od_pairs_analyzed": 30}\n\n'
-                "1. Sreason (Reasoning Process, weight 0.3): Did the agent understand OD-pair grouping? "
-                "Did it justify the z-score threshold? Did it recognize Haversine is needed?\n\n"
-                "2. Scode (Code Steps, weight 0.3): Did the agent correctly implement Haversine? "
-                "Did it properly group by OD pair (0.01-degree grid)? Did it compute z-scores correctly? "
-                "Are visualizations informative?\n\n"
-                "3. Sresult (Final Result, weight 0.4): Did the agent correctly identify the anomalous "
-                "routes? Penalize heavily for large numbers of false positives. "
+                "1. Sreason (weight 0.3): Did the agent recognise the need to control for both "
+                "time_of_day AND driver_experience before computing anomaly scores? Did it justify "
+                "using Haversine over Euclidean? Did it reason about why stratification is necessary?\n\n"
+                "2. Scode (weight 0.3): Is Haversine correctly implemented? Does the code stratify "
+                "by OD pair × time_of_day × driver_experience before computing z-scores? "
+                "Are visualisations produced (map + path-length plot)?\n\n"
+                "3. Sresult (weight 0.4): Did the agent correctly identify all 5 anomalous routes "
+                "with zero false positives? "
                 f"Agent found: {sorted(predicted_set)} vs ground truth: {sorted(gt_set)}. "
-                f"F1={f1:.3f}, Precision={precision:.3f}, Recall={recall:.3f}.\n\n"
+                f"Confounders controlled: {confounders}.\n\n"
                 "The final weighted score: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 1.0). "
                 "A score >= 0.6 is passing.\n\n"
+                "QRA Reference:\n"
+                "## Reasoning\n"
+                "1. Haversine path length per route\n"
+                "2. Snap start/end to 0.01° grid for OD pair key\n"
+                "3. Stratify by OD pair × time_of_day × driver_experience\n"
+                "4. Flag routes with z > 3.5 within their stratum\n"
+                "5. Anomaly z-scores ≈ 4.4; all naive z-scores ≈ 1.07\n\n"
+                "## Answer\n"
+                '{"anomalous_route_ids": [600,601,602,603,604], '
+                '"distance_method": "haversine", '
+                '"confounders_controlled": ["time_of_day", "driver_experience"]}\n\n'
                 f"Agent trajectory:\n{trajectory_raw}\n\n"
                 f"Agent results:\n{results_str}\n\n"
                 "Respond with JSON only, no other text:\n"
@@ -148,19 +153,19 @@ if det_pass:
             weighted_score = round(Sreason*0.3 + Scode*0.3 + Sresult*0.4, 4)
             judge_reasoning = f"API unavailable ({e}); deterministic checks passed"
 
+# ── Final reward ───────────────────────────────────────────────────────────────
 reward = 1 if (det_pass and weighted_score >= 0.6) else 0
 print(f"\nFinal reward: {reward}")
 
 out = {
-    "precision":      round(precision, 4),
-    "recall":         round(recall, 4),
-    "f1_score":       round(f1, 4),
-    "true_positives": tp,
-    "Sreason":        Sreason,
-    "Scode":          Scode,
-    "Sresult":        Sresult,
-    "weighted_score": weighted_score,
-    "reward":         reward,
+    "exact_match_check": exact_match_check,
+    "haversine_check":   haversine_check,
+    "count_check":       count_check,
+    "Sreason":           Sreason,
+    "Scode":             Scode,
+    "Sresult":           Sresult,
+    "weighted_score":    weighted_score,
+    "reward":            reward,
 }
 with open("/logs/verifier/reward.json",        "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",         "w") as f: f.write(str(reward))

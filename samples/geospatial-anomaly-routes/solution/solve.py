@@ -1,99 +1,98 @@
-import math, json, os
-import pandas as pd
+import json, math, os
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
+import pandas as pd
 import matplotlib.pyplot as plt
-from collections import defaultdict
+import folium
+from scipy import stats as sp_stats
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
     return R * 2 * math.asin(math.sqrt(a))
 
-df = pd.read_csv('/data/trajectories.csv')
+df = pd.read_csv("/data/trajectories.csv")
+df = df.sort_values(["route_id", "timestamp"])
 
-route_ids = df['route_id'].unique()
-route_stats = {}
-for rid in route_ids:
-    sub = df[df['route_id'] == rid].sort_values('point_index')
-    lats = sub['latitude'].values
-    lons = sub['longitude'].values
-    plen = sum(haversine(lats[i-1], lons[i-1], lats[i], lons[i]) for i in range(1, len(lats)))
-    origin = (round(lats[0], 2), round(lons[0], 2))
-    dest = (round(lats[-1], 2), round(lons[-1], 2))
-    route_stats[rid] = {
-        'path_length_m': plen,
-        'origin': origin,
-        'dest': dest,
-        'od_pair': f"{origin}->{dest}",
-        'start_lat': lats[0], 'start_lon': lons[0],
-        'end_lat': lats[-1], 'end_lon': lons[-1]
+# Haversine path length per route
+path_lengths = {}
+for rid, grp in df.groupby("route_id"):
+    g = grp.sort_values("timestamp")
+    lats, lons = g.latitude.values, g.longitude.values
+    pl = sum(haversine(lats[i], lons[i], lats[i+1], lons[i+1]) for i in range(len(lats)-1))
+    path_lengths[rid] = pl
+
+# OD pair key (snap to 0.01° grid) + confounder metadata
+od_keys, meta = {}, {}
+for rid, grp in df.groupby("route_id"):
+    g = grp.sort_values("timestamp")
+    o = (round(g.latitude.iloc[0], 2), round(g.longitude.iloc[0], 2))
+    d = (round(g.latitude.iloc[-1], 2), round(g.longitude.iloc[-1], 2))
+    od_keys[rid] = (o, d)
+    meta[rid] = {
+        "time_of_day":       g.time_of_day.iloc[0],
+        "driver_experience": g.driver_experience.iloc[0],
     }
 
-od_groups = defaultdict(list)
-for rid, s in route_stats.items():
-    od_groups[s['od_pair']].append((rid, s['path_length_m']))
+# Stratified z-score: group by OD pair × time_of_day × driver_experience
+THRESHOLD = 3.5   # strict threshold needed for 20-route strata
+groups = {}
+for rid in path_lengths:
+    tod = meta[rid]["time_of_day"]
+    exp = meta[rid]["driver_experience"]
+    key = (od_keys[rid], tod, exp)
+    groups.setdefault(key, []).append(rid)
 
-anomalous_route_ids = []
-od_pairs_analyzed = 0
-
-for od, pairs in od_groups.items():
-    if len(pairs) < 3:
+anomalous = set()
+for rids in groups.values():
+    if len(rids) < 3:
         continue
-    od_pairs_analyzed += 1
-    lengths = np.array([p[1] for p in pairs])
-    mean_len = lengths.mean()
-    std_len = lengths.std()
-    if std_len < 1:
-        continue
-    for rid, plen in pairs:
-        z = (plen - mean_len) / std_len
-        if z > 3.0:
-            anomalous_route_ids.append(int(rid))
+    lengths = np.array([path_lengths[r] for r in rids])
+    z = sp_stats.zscore(lengths)
+    for r, zi in zip(rids, z):
+        if zi > THRESHOLD:
+            anomalous.add(r)
 
-anomalous_route_ids = sorted(set(anomalous_route_ids))
+anomalous = sorted(anomalous)
+print(f"Anomalous routes ({len(anomalous)}): {anomalous}")
 
-os.makedirs('/output', exist_ok=True)
+os.makedirs("/output/plots", exist_ok=True)
 
-# Plot 1: Path length distribution with anomalies highlighted
-all_lengths = [(rid, s['path_length_m']) for rid, s in route_stats.items()]
-normal_lens = [pl for rid, pl in all_lengths if rid not in anomalous_route_ids]
-anom_lens = [pl for rid, pl in all_lengths if rid in anomalous_route_ids]
-
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-axes[0].hist(normal_lens, bins=40, color='steelblue', alpha=0.7, label=f'Normal (n={len(normal_lens)})')
-if anom_lens:
-    axes[0].hist(anom_lens, bins=10, color='red', alpha=0.9, label=f'Anomalous (n={len(anom_lens)})')
-axes[0].set_xlabel('Path Length (m)')
-axes[0].set_ylabel('Count')
-axes[0].set_title('Route Path Length Distribution')
-axes[0].legend()
-
-# Plot 2: Map of route start points
-colors = ['red' if rid in anomalous_route_ids else 'steelblue' for rid in route_stats]
-start_lats = [s['start_lat'] for s in route_stats.values()]
-start_lons = [s['start_lon'] for s in route_stats.values()]
-axes[1].scatter(start_lons, start_lats, c=colors, alpha=0.5, s=15)
-axes[1].set_xlabel('Longitude')
-axes[1].set_ylabel('Latitude')
-axes[1].set_title('Route Start Points (red = anomalous)')
-
+# Path length distribution plot
+fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+od_pairs = sorted(set(od_keys[r] for r in path_lengths))
+for ax, od in zip(axes, od_pairs):
+    rids = [r for r, k in od_keys.items() if k == od]
+    lengths = [path_lengths[r] for r in rids]
+    colors = ["red" if r in anomalous else "steelblue" for r in rids]
+    ax.bar(range(len(rids)), sorted(lengths), color=sorted(colors, reverse=True))
+    ax.set_title(f"{od[0]}→{od[1]}", fontsize=7)
+    ax.set_xlabel("Route (sorted)")
+    ax.set_ylabel("Path length (m)")
 plt.tight_layout()
-plt.savefig('/output/anomaly_detection.png', dpi=100, bbox_inches='tight')
+plt.savefig("/output/plots/path_lengths.png", dpi=100)
 plt.close()
 
+# Folium map
+center_lat = df.latitude.mean()
+center_lon = df.longitude.mean()
+m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+for rid, grp in df.groupby("route_id"):
+    g = grp.sort_values("timestamp")
+    coords = list(zip(g.latitude.values, g.longitude.values))
+    color = "red" if rid in anomalous else "blue"
+    weight = 3 if rid in anomalous else 1
+    folium.PolyLine(coords, color=color, weight=weight, opacity=0.7).add_to(m)
+m.save("/output/plots/route_map.html")
+
 results = {
-    'anomalous_route_ids': anomalous_route_ids,
-    'method': 'haversine path length + z-score per OD pair (threshold z > 3.0)',
-    'od_pairs_analyzed': od_pairs_analyzed
+    "anomalous_route_ids":    anomalous,
+    "n_anomalous_routes":     len(anomalous),
+    "distance_method":        "haversine",
+    "confounders_controlled": ["time_of_day", "driver_experience"],
+    "detection_method":       f"stratified z-score > {THRESHOLD} per OD×time_of_day×driver_experience stratum",
 }
-
-with open('/output/results.json', 'w') as f:
+with open("/output/results.json", "w") as f:
     json.dump(results, f, indent=2)
-
-print(f"Analyzed {od_pairs_analyzed} OD pairs")
-print(f"Anomalous routes: {anomalous_route_ids}")
+print(json.dumps(results, indent=2))

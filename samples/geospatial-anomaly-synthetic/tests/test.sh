@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"route_detection_check":0,"haversine_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"exact_match_check":0,"haversine_check":0,"count_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results.json found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -18,17 +18,14 @@ python3 - <<'PYEOF'
 import sys, json, os
 import urllib.request
 
-GROUND_TRUTH_IDS = [35,36,37,38,39,75,76,77,78,79,
-                    115,116,117,118,119,155,156,157,158,159,
-                    195,196,197,198,199]
-N_GT = len(GROUND_TRUTH_IDS)
+GROUND_TRUTH = [39, 79, 119, 159, 199]
 
 try:
     with open("/output/results.json") as f:
         results = json.load(f)
 except Exception as e:
     print(f"Error reading results.json: {e}")
-    out = {"route_detection_check":0,"haversine_check":0,
+    out = {"exact_match_check":0,"haversine_check":0,"count_check":0,
            "Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}
     with open("/logs/verifier/reward.json","w") as f: json.dump(out, f, indent=2)
     with open("/logs/verifier/reward.txt","w") as f: f.write("0")
@@ -40,26 +37,26 @@ predicted = results.get("anomalous_route_ids", [])
 if not isinstance(predicted, list):
     predicted = []
 predicted_set = set(int(x) for x in predicted)
-gt_set = set(GROUND_TRUTH_IDS)
+gt_set = set(GROUND_TRUTH)
 
-# All ground truth IDs must be detected (recall = 1.0)
-missing = gt_set - predicted_set
-route_detection_check = int(len(missing) == 0)
+exact_match_check = int(predicted_set == gt_set)
+distance_method   = str(results.get("distance_method", "")).strip().lower()
+haversine_check   = int("haversine" in distance_method)
+count_check       = int(results.get("n_anomalous_routes", -1) == 5)
 
-# Agent must declare haversine as distance method
-distance_method = str(results.get("distance_method", "")).strip().lower()
-haversine_check = int("haversine" in distance_method)
+tp = len(predicted_set & gt_set)
+fp = len(predicted_set - gt_set)
+fn = len(gt_set - predicted_set)
 
-n_detected = results.get("n_anomalous_routes", len(predicted_set))
-
-print(f"Predicted IDs: {sorted(predicted_set)}")
+print(f"Predicted:     {sorted(predicted_set)}")
 print(f"Ground truth:  {sorted(gt_set)}")
-print(f"Missing:       {sorted(missing)}")
-print(f"False positives: {sorted(predicted_set - gt_set)}")
-print(f"Route detection: {'PASS' if route_detection_check else 'FAIL'} (all {N_GT} GT IDs must be found)")
-print(f"Haversine check: {'PASS' if haversine_check else 'FAIL'} (distance_method={distance_method!r})")
+print(f"TP={tp}  FP={fp}  FN={fn}")
+print(f"Exact match:   {'PASS' if exact_match_check else 'FAIL'}")
+print(f"Haversine:     {'PASS' if haversine_check   else 'FAIL'} ({distance_method!r})")
+print(f"Count check:   {'PASS' if count_check       else 'FAIL'}")
 
-det_pass = int(route_detection_check and haversine_check)
+det_pass = int(exact_match_check and haversine_check and count_check)
+print(f"Deterministic: {'PASS' if det_pass else 'FAIL'}")
 
 # ── Part 2: LLM-as-judge ──────────────────────────────────────────────────────
 Sreason = 0.0; Scode = 0.0; Sresult = 0.0
@@ -82,46 +79,40 @@ if det_pass:
 
             results_str = json.dumps(results, ensure_ascii=False)[:3000]
 
-            n_fp = len(predicted_set - gt_set)
+            confounders = results.get("confounders_controlled", [])
+
             judge_prompt = (
                 "You are evaluating a data science agent on a geospatial anomaly detection task. "
-                "The agent must identify anomalous GPS delivery routes in San Francisco by using "
-                "correct geospatial distance methods and comparing routes by origin-destination pair.\n\n"
+                "The dataset contains 200 synthetic GPS routes across 5 San Francisco OD pairs. "
+                "Two confounders must be controlled: time_of_day (evening routes 20% longer) and "
+                "driver_experience (senior routes 30% longer). Naive z-score per OD pair fails — "
+                "anomaly naive z-scores are ~1.17. Stratified z-score (OD×time_of_day×driver_experience) "
+                "correctly detects anomalies at z ≈ 2.82. The detection window is narrow: threshold "
+                "must be in (2.5, 2.82) — z > 2.0 gives false positives, z > 3.0 misses anomalies.\n\n"
                 "Score the agent on three dimensions, each 0-1:\n\n"
-                "QRA Reference:\n\n"
-                "## Question\n"
-                "Given GPS trajectory data from delivery drivers in San Francisco, identify which "
-                "routes are anomalous — taking significantly longer paths than expected between the "
-                "same origin-destination pairs.\n\n"
-                "## Reasoning\n"
-                "1. Load trajectories.csv (7,158 rows, 200 routes with 20-50 GPS points each)\n"
-                "2. Use Haversine formula for distances — NOT Euclidean. Euclidean distance on "
-                "lat/lon gives wrong results for geographic data.\n"
-                "3. Compute total path length per route by summing Haversine distances between "
-                "consecutive GPS points\n"
-                "4. Group routes by origin-destination (OD) pair (snap start/end to ~0.01° grid)\n"
-                "5. For each OD pair: compute mean and std of path lengths\n"
-                "6. Flag routes where z-score = (path_length - mean) / std > 2.0\n"
-                "7. There are 5 OD pairs, each with 35 normal + 5 anomalous routes\n"
-                "8. Anomalous routes are 2.7-3.3x longer than normal for the same OD pair\n\n"
-                "## Answer\n"
-                '{"n_anomalous_routes": 25, '
-                '"anomalous_route_ids": [35-39, 75-79, 115-119, 155-159, 195-199], '
-                '"distance_method": "haversine", '
-                '"detection_method": "z-score > 2.0 on path length per OD pair"}\n\n'
-                "1. Sreason (Reasoning Process, weight 0.3): Did the agent recognize this requires "
-                "grouping routes by OD pair before comparing? Did it justify using Haversine over "
-                "Euclidean? Did it understand why geographic distance calculation matters here?\n\n"
-                "2. Scode (Code Steps, weight 0.3): Is the Haversine formula correctly implemented? "
-                "Does the code correctly group routes by origin-destination pairs? Does it compute "
-                "z-scores or equivalent outlier detection? Are the visualizations informative?\n\n"
-                "3. Sresult (Final Result, weight 0.4): Did the agent correctly identify all 25 "
-                "anomalous routes? Are false positives minimal? "
-                f"Agent detected: {len(predicted_set)} routes, {N_GT} correct, {n_fp} false positives. "
-                "A naive agent using Euclidean distance would still likely find most anomalies since "
-                "the detours are extreme — the key distinction is correctly declaring 'haversine'.\n\n"
+                "1. Sreason (weight 0.3): Did the agent recognise the need to control for both "
+                "time_of_day AND driver_experience? Did it justify Haversine over Euclidean? "
+                "Did it understand that stratification is essential for detection?\n\n"
+                "2. Scode (weight 0.3): Is Haversine correctly implemented? Does the code stratify "
+                "by OD pair × time_of_day × driver_experience? Does it produce visualisations?\n\n"
+                "3. Sresult (weight 0.4): Did the agent correctly identify all 5 anomalous routes "
+                "with zero false positives? The detection window is narrow — getting exact match "
+                "requires careful threshold tuning. "
+                f"Agent found: {sorted(predicted_set)} vs ground truth: {sorted(gt_set)}. "
+                f"Confounders controlled: {confounders}.\n\n"
                 "The final weighted score: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 1.0). "
                 "A score >= 0.6 is passing.\n\n"
+                "QRA Reference:\n"
+                "## Reasoning\n"
+                "1. Haversine path length per route\n"
+                "2. Snap start/end to 0.01° grid for OD pair key\n"
+                "3. Stratify by OD pair × time_of_day × driver_experience\n"
+                "4. Flag routes with z > 2.5 within their stratum (window: 2.5–2.82)\n"
+                "5. Anomaly z-scores ≈ 2.82; all naive z-scores ≈ 1.17\n\n"
+                "## Answer\n"
+                '{"anomalous_route_ids": [39,79,119,159,199], '
+                '"distance_method": "haversine", '
+                '"confounders_controlled": ["time_of_day", "driver_experience"]}\n\n'
                 f"Agent trajectory:\n{trajectory_raw}\n\n"
                 f"Agent results:\n{results_str}\n\n"
                 "Respond with JSON only, no other text:\n"
@@ -165,13 +156,14 @@ reward = 1 if (det_pass and weighted_score >= 0.6) else 0
 print(f"\nFinal reward: {reward}")
 
 out = {
-    "route_detection_check": route_detection_check,
-    "haversine_check":       haversine_check,
-    "Sreason":               Sreason,
-    "Scode":                 Scode,
-    "Sresult":               Sresult,
-    "weighted_score":        weighted_score,
-    "reward":                reward,
+    "exact_match_check": exact_match_check,
+    "haversine_check":   haversine_check,
+    "count_check":       count_check,
+    "Sreason":           Sreason,
+    "Scode":             Scode,
+    "Sresult":           Sresult,
+    "weighted_score":    weighted_score,
+    "reward":            reward,
 }
 with open("/logs/verifier/reward.json",        "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",         "w") as f: f.write(str(reward))

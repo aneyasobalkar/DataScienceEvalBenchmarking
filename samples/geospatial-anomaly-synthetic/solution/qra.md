@@ -1,47 +1,38 @@
-# QRA: Anomalous Delivery Route Detection
+# QRA: Anomalous Route Detection — San Francisco Synthetic Trajectories
 
 ## Question
 
-Given GPS trajectory data from delivery drivers operating in San Francisco, identify which routes are anomalous — taking significantly longer paths than expected between the same origin-destination pairs.
+Given synthetic GPS trajectory data from delivery drivers in San Francisco with `time_of_day` and `driver_experience` metadata, identify the 5 anomalous routes that take a significantly longer path than expected for their origin–destination pair.
 
 ## Reasoning
 
-This is a geospatial analysis problem with a critical trap:
-
-1. Load `trajectories.csv` (7,158 rows, 200 routes with 20–50 GPS points each)
-2. **Use Haversine formula** for distances — NOT Euclidean. Treating lat/long as regular Cartesian coordinates gives systematically wrong results for geographic data.
-3. For each route, compute total path length by summing Haversine distances between consecutive GPS points
-4. Identify origin-destination (OD) pairs by snapping start and end coordinates to a 0.01-degree grid
-5. For each OD pair, compute mean and standard deviation of path lengths across all routes
-6. Flag routes where path length > mean + 2 × std as anomalous (z-score > 2.0)
-7. Visualize on a map — anomalous routes appear as dramatic spatial outliers
-
-Naive agents use Euclidean distance (treating lat/lon as Cartesian) and may get wrong anomaly flags, especially since Euclidean distance between GPS coordinates does not preserve physical distances correctly.
-
-Dataset structure:
-- 5 OD pairs × (35 normal + 5 anomalous) = 200 routes total
-- Normal routes: path length ≈ 1.1–1.2× direct distance (CV ~0.01–0.02)
-- Anomalous routes: path length ≈ 2.7–3.3× the normal mean for the same OD pair
+1. Use **Haversine formula** for geographic distances — Euclidean distance on lat/lon is incorrect.
+2. Compute total path length per route by summing Haversine distances between consecutive GPS points.
+3. Snap start/end coordinates to a 0.01-degree grid (round to 2 decimal places) to identify OD pairs.
+4. **Naive z-score (OD pair only) fails** — confounder variance (senior 30% longer, evening 20% longer) hides anomalies; all anomaly naive z-scores ≈ 1.17, well below 2.0.
+5. **Stratify by OD pair × time_of_day × driver_experience** — within the junior×morning stratum, std drops to ~25 m (±1%), exposing anomalies at z ≈ 2.82.
+6. Use **z > 2.5** as the detection threshold. With 5–8 routes per stratum, the mathematical upper bound on any normal route's z-score is √(n−1) ≤ √7 ≈ 2.65; any anomaly above this bound is a genuine outlier. The window z ∈ (2.5, 2.82) gives exact match with zero false positives.
 
 ## Answer
 
 ```json
 {
-  "n_anomalous_routes": 25,
-  "anomalous_route_ids": [35, 36, 37, 38, 39, 75, 76, 77, 78, 79,
-                          115, 116, 117, 118, 119, 155, 156, 157, 158, 159,
-                          195, 196, 197, 198, 199],
+  "anomalous_route_ids": [39, 79, 119, 159, 199],
+  "n_anomalous_routes": 5,
   "distance_method": "haversine",
-  "detection_method": "z-score > 2.0 on path length per OD pair (5 pairs)"
+  "confounders_controlled": ["time_of_day", "driver_experience"],
+  "detection_method": "stratified z-score > 2.5 per OD×time_of_day×driver_experience stratum"
 }
 ```
 
-### OD Pair Details
+### Per-OD statistics
 
-| OD Pair | Direct dist | Normal mean | Normal std | Anomaly mean | Ratio | Anomaly z range |
-|---------|------------|-------------|-----------|--------------|-------|-----------------|
-| Embarcadero→Bayview | 6,669m | 6,786m | 85m | 19,583m | 2.89× | 2.40–2.94 |
-| SoMa→NorthEast | 5,962m | 6,083m | 75m | 17,847m | 2.93× | 2.21–3.15 |
-| NorthBeach→WestPortal | 8,577m | 8,743m | 146m | 26,745m | 3.06× | 2.05–2.87 |
-| Mission→GlenPark | 5,478m | 5,573m | 90m | 16,815m | 3.02× | 2.11–3.26 |
-| HayesValley→Presidio | 5,031m | 5,106m | 58m | 15,218m | 2.98× | 2.16–3.23 |
+| OD pair | Anomaly path | jm mean±std | all mean±std | Naive z | Strat z |
+|---|---|---|---|---|---|
+| FiDi→Mission | 6,314 m | 4,741±22 m | 5,497±672 m | 1.18 | 2.83 |
+| SoMa→Castro | 4,844 m | 3,452±21 m | 4,116±606 m | 1.17 | 2.83 |
+| NorthBeach→Sunset | 13,334 m | 9,530±38 m | 11,340±1,649 m | 1.17 | 2.83 |
+| Tenderloin→Potrero | 3,199 m | 2,286±15 m | 2,732±400 m | 1.13 | 2.82 |
+| Chinatown→NoeValley | 7,241 m | 5,481±38 m | 6,311±759 m | 1.19 | 2.82 |
+
+Each anomalous route is placed in the junior×morning stratum and is 1.45× the stratum base length — within the "subtle" 1.3–1.5× range — but clearly anomalous once confounders are removed.
