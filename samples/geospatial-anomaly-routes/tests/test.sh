@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"exact_match_check":0,"haversine_check":0,"count_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"exact_match_check":0,"haversine_check":0,"count_check":0,"confounder_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results.json found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -25,7 +25,7 @@ try:
         results = json.load(f)
 except Exception as e:
     print(f"Error reading results.json: {e}")
-    out = {"exact_match_check":0,"haversine_check":0,"count_check":0,
+    out = {"exact_match_check":0,"haversine_check":0,"count_check":0,"confounder_check":0,
            "Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}
     with open("/logs/verifier/reward.json","w") as f: json.dump(out, f, indent=2)
     with open("/logs/verifier/reward.txt","w") as f: f.write("0")
@@ -44,19 +44,28 @@ distance_method   = str(results.get("distance_method", "")).strip().lower()
 haversine_check   = int("haversine" in distance_method)
 count_check       = int(results.get("n_anomalous_routes", -1) == 5)
 
+# Confounder check: agent must discover and list BOTH confounders
+raw_confounders = results.get("confounders_controlled", [])
+if isinstance(raw_confounders, list):
+    conf_set = set(str(c).strip().lower() for c in raw_confounders)
+else:
+    conf_set = set()
+confounder_check = int("time_of_day" in conf_set and "driver_experience" in conf_set)
+
 tp = len(predicted_set & gt_set)
 fp = len(predicted_set - gt_set)
 fn = len(gt_set - predicted_set)
 
-print(f"Predicted:     {sorted(predicted_set)}")
-print(f"Ground truth:  {sorted(gt_set)}")
+print(f"Predicted:         {sorted(predicted_set)}")
+print(f"Ground truth:      {sorted(gt_set)}")
 print(f"TP={tp}  FP={fp}  FN={fn}")
-print(f"Exact match:   {'PASS' if exact_match_check else 'FAIL'}")
-print(f"Haversine:     {'PASS' if haversine_check   else 'FAIL'} ({distance_method!r})")
-print(f"Count check:   {'PASS' if count_check       else 'FAIL'}")
+print(f"Exact match:       {'PASS' if exact_match_check else 'FAIL'}")
+print(f"Haversine:         {'PASS' if haversine_check   else 'FAIL'} ({distance_method!r})")
+print(f"Count check:       {'PASS' if count_check       else 'FAIL'}")
+print(f"Confounders found: {sorted(conf_set)}  ->  {'PASS' if confounder_check else 'FAIL'} (need time_of_day + driver_experience)")
 
-det_pass = int(exact_match_check and haversine_check and count_check)
-print(f"Deterministic: {'PASS' if det_pass else 'FAIL'}")
+det_pass = int(exact_match_check and haversine_check and count_check and confounder_check)
+print(f"Deterministic:     {'PASS' if det_pass else 'FAIL'}")
 
 # ── Part 2: LLM-as-judge ──────────────────────────────────────────────────────
 Sreason = 0.0; Scode = 0.0; Sresult = 0.0
@@ -92,11 +101,17 @@ if det_pass:
                 "std drops to ~100 m and anomaly z-scores reach ~4.4. The correct threshold is z > 3.5 "
                 "(with 20 routes per stratum, natural outliers can reach z ≈ 3.1).\n\n"
                 "Score the agent on three dimensions, each 0-1:\n\n"
-                "1. Sreason (weight 0.3): Did the agent recognise the need to control for both "
-                "time_of_day AND driver_experience before computing anomaly scores? Did it justify "
-                "using Haversine over Euclidean? Did it reason about why stratification is necessary?\n\n"
+                "IMPORTANT: The instruction does NOT tell the agent which confounders exist. "
+                "The agent must DISCOVER confounders by exploring the data (e.g., boxplots by "
+                "time_of_day and driver_experience, correlation analysis). Agents that merely "
+                "mention confounders without evidence of discovery should score lower on Sreason.\n\n"
+                "1. Sreason (weight 0.3): Did the agent empirically discover that time_of_day "
+                "AND driver_experience affect route lengths? Did it test for confounders before "
+                "stratifying? Did it justify Haversine over Euclidean? "
+                "Partial credit for finding only one confounder.\n\n"
                 "2. Scode (weight 0.3): Is Haversine correctly implemented? Does the code stratify "
                 "by OD pair × time_of_day × driver_experience before computing z-scores? "
+                "Does it show evidence of EDA (comparing route lengths across metadata groups)? "
                 "Are visualisations produced (map + path-length plot)?\n\n"
                 "3. Sresult (weight 0.4): Did the agent correctly identify all 5 anomalous routes "
                 "with zero false positives? "
@@ -158,14 +173,15 @@ reward = 1 if (det_pass and weighted_score >= 0.6) else 0
 print(f"\nFinal reward: {reward}")
 
 out = {
-    "exact_match_check": exact_match_check,
-    "haversine_check":   haversine_check,
-    "count_check":       count_check,
-    "Sreason":           Sreason,
-    "Scode":             Scode,
-    "Sresult":           Sresult,
-    "weighted_score":    weighted_score,
-    "reward":            reward,
+    "exact_match_check":  exact_match_check,
+    "haversine_check":    haversine_check,
+    "count_check":        count_check,
+    "confounder_check":   confounder_check,
+    "Sreason":            Sreason,
+    "Scode":              Scode,
+    "Sresult":            Sresult,
+    "weighted_score":     weighted_score,
+    "reward":             reward,
 }
 with open("/logs/verifier/reward.json",        "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",         "w") as f: f.write(str(reward))

@@ -21,7 +21,7 @@ There are 200 routes in total.
 
 Identify which routes are anomalous — routes that take a significantly longer path than expected between the same origin–destination pair.
 
-**Important:** Driver experience and time of day naturally affect route lengths. You should account for these factors when deciding what counts as anomalous.
+Before flagging anomalies, explore whether any metadata columns in the dataset systematically affect route lengths. Account for all relevant confounders when computing expected path lengths for each route.
 
 ## Output
 

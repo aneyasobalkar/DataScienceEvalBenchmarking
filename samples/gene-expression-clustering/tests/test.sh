@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"silhouette_check":0,"pca_reduction_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"silhouette_check":0,"pca_reduction_check":0,"batch_independence_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results.json found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -24,7 +24,7 @@ try:
         results = json.load(f)
 except Exception as e:
     print(f"Error reading results.json: {e}")
-    out = {"silhouette_check":0,"pca_reduction_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}
+    out = {"silhouette_check":0,"pca_reduction_check":0,"batch_independence_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}
     with open("/logs/verifier/reward.json","w") as f: json.dump(out, f, indent=2)
     with open("/logs/verifier/reward.txt","w") as f: f.write("0")
     with open("/logs/verifier/judge_reasoning.txt","w") as f: f.write(str(e))
@@ -33,13 +33,40 @@ except Exception as e:
 sil       = float(results.get("silhouette_score", 0))
 n_comp    = int(results.get("n_components_pca", 999))
 
-sil_check = bool(sil > 0.3)
-pca_check = bool(n_comp < 50)
+# Batch-independence check: clusters must NOT align with the 3 batch/lab labels
+# ARI(cluster_labels, batch_labels) < 0.3 means clustering is biology-driven, not batch-driven
+batch_ari = 1.0  # default to fail
+try:
+    import csv as _csv
+    batch_map = {}
+    with open("/data/sample_metadata.csv") as bf:
+        reader = _csv.DictReader(bf)
+        for row in reader:
+            batch_map[row["sample_id"]] = row["batch"]
+    # batch labels in sample order (sample_1..sample_72)
+    ordered_samples = sorted(batch_map.keys(), key=lambda s: int(s.split("_")[1]))
+    batch_str = [batch_map[s] for s in ordered_samples]
+    unique_batches = sorted(set(batch_str))
+    batch_int = [unique_batches.index(b) for b in batch_str]
 
-print(f"Silhouette score:  {sil:.4f}  ->  {'PASS' if sil_check else 'FAIL'} (need > 0.3)")
-print(f"PCA components:    {n_comp}     ->  {'PASS' if pca_check else 'FAIL'} (need < 50)")
+    cluster_labels_raw = results.get("cluster_labels", [])
+    if len(cluster_labels_raw) == len(batch_int):
+        from sklearn.metrics import adjusted_rand_score as _ari
+        batch_ari = _ari(batch_int, cluster_labels_raw)
+    else:
+        print(f"cluster_labels length mismatch: got {len(cluster_labels_raw)}, expected {len(batch_int)}")
+except Exception as e_batch:
+    print(f"Batch ARI computation failed: {e_batch}")
 
-det_pass = int(sil_check and pca_check)
+sil_check   = bool(sil > 0.3)
+pca_check   = bool(n_comp < 50)
+batch_check = bool(batch_ari < 0.3)
+
+print(f"Silhouette score:       {sil:.4f}   ->  {'PASS' if sil_check   else 'FAIL'} (need > 0.3)")
+print(f"PCA components:         {n_comp}      ->  {'PASS' if pca_check   else 'FAIL'} (need < 50)")
+print(f"Batch independence ARI: {batch_ari:.4f}  ->  {'PASS' if batch_check else 'FAIL'} (need ARI < 0.3 vs batch labels)")
+
+det_pass = int(sil_check and pca_check and batch_check)
 
 # ── Part 2: LLM-as-judge (only if deterministic checks pass) ─────────────────
 Sreason = 0.0
@@ -66,47 +93,37 @@ if det_pass:
             results_str = json.dumps(results, ensure_ascii=False)[:3000]
 
             judge_prompt = (
-                "You are evaluating a data science agent on a high-dimensional gene expression clustering task. "
-                "The dataset has ~7000 gene features and only ~70 samples — naive clustering without "
-                "dimensionality reduction will fail. Score the agent on three dimensions, each 0-1:\n\n"
-                "The reference solution approach is documented in the QRA pair for this task. "
-                "Use the Reasoning section of the QRA as the benchmark for Sreason — if the "
-                "agent followed a similar methodology it should score highly. Use the Answer "
-                "section as the benchmark for Sresult — if the agent's output matches the "
-                "expected structure and values it should score highly. Alternative valid "
-                "approaches that reach the correct answer should still receive full credit.\n\n"
+                "You are evaluating a data science agent on a gene expression clustering task with batch effects. "
+                "The dataset has samples from 3 labs (batches). Without batch correction, clustering returns "
+                "3 clusters aligned to the 3 labs — NOT the true cancer subtypes. The agent must detect and "
+                "correct the batch effects before clustering. Score on three dimensions, each 0-1:\n\n"
                 "QRA Reference:\n\n"
                 "## Question\n"
-                "Given a high-dimensional gene expression dataset of cancer patient samples "
-                "with ~7000 gene features, cluster the samples into biologically meaningful "
-                "groups. The data contains measurements from patients with different cancer "
-                "subtypes.\n\n"
+                "Given a high-dimensional gene expression dataset with samples from 3 different labs, "
+                "cluster the samples into biologically meaningful cancer subtypes. Samples come from "
+                "lab_A, lab_B, and lab_C. Batch effects from the labs dominate the naive analysis.\n\n"
                 "## Reasoning\n"
-                "This is a high-dimensional clustering problem where n_samples << n_features:\n"
-                "1. Standardize features first since gene expression values have different scales\n"
-                "2. Apply PCA to reduce dimensions while retaining >=85% variance — this "
-                "should yield ~10-20 components\n"
-                "3. Use the elbow method and silhouette analysis to determine optimal k\n"
-                "4. Cluster in reduced space using k-means or hierarchical clustering\n"
-                "5. Evaluate with silhouette score and Davies-Bouldin index — NOT accuracy "
-                "since this is unsupervised\n"
-                "6. Visualize clusters in 2D PCA space to check biological plausibility\n"
-                "7. Clustering directly in 7000 dimensions is meaningless — dimensionality "
-                "reduction is mandatory\n\n"
+                "This is a batch-confounded clustering problem:\n"
+                "1. Load sample_metadata.csv to get batch (lab) labels per sample\n"
+                "2. Naive PCA/clustering without correction → 3 clusters = 3 labs (ARI~1.0 with batch)\n"
+                "3. Must detect and correct batch effects before clustering\n"
+                "4. Batch correction methods: mean-centering per batch, ComBat, or removeBatchEffect\n"
+                "5. After correction → 3 true cancer subtype clusters emerge (sil > 0.3)\n"
+                "6. Verify: corrected clusters must NOT align with batch labels (ARI < 0.3)\n"
+                "7. A naive agent reports batch-aligned clusters with high sil=0.55 but wrong biology\n\n"
                 "## Answer\n"
                 '{"silhouette_score": ">0.3", "n_components_pca": "<50", '
-                '"variance_explained": ">=0.85", "n_clusters": "2-5", '
-                '"visualizations": ["scree_plot.png", "pca_clusters.png", "silhouette.png"]}\n\n'
-                "1. Sreason (Reasoning Process, weight 0.3): Did the agent recognise that dimensionality "
-                "reduction is necessary before clustering high-dimensional data? Did it justify the choice "
-                "of number of components and clusters using scree plots or silhouette analysis? Is the "
-                "methodology sound regardless of exact approach?\n\n"
-                "2. Scode (Code Steps, weight 0.3): Is the code logically coherent and free of fatal errors? "
-                "Does it standardise before reducing dimensions? Does it correctly evaluate clustering quality "
-                "with appropriate unsupervised metrics?\n\n"
-                "3. Sresult (Final Result, weight 0.4): What is the holistic quality of the outcome — "
-                "clustering metrics, visualizations (scree plot, PCA scatter, silhouette diagram), and "
-                "biological interpretability? Accept valid alternative approaches.\n\n"
+                '"n_clusters": 3, "cluster_labels": [0..2 for each sample], '
+                '"batch_correction_applied": true, "ARI_vs_batch": "<0.3"}\n\n'
+                "1. Sreason (Reasoning Process, weight 0.3): Did the agent check whether clusters "
+                "correlate with batch labels? Did it apply a batch correction method before clustering? "
+                "Did it recognize the batch effect as the dominant confound?\n\n"
+                "2. Scode (Code Steps, weight 0.3): Does the code load sample_metadata.csv and use batch "
+                "labels? Does it correctly implement batch correction? Does it verify batch-independence "
+                "of the final clustering? Does it produce visualizations showing before/after correction?\n\n"
+                "3. Sresult (Final Result, weight 0.4): Do the final cluster labels avoid batch alignment "
+                "(ARI vs batch < 0.3)? Is silhouette > 0.3 after correction? Does it identify 3 clusters? "
+                "Agents that skip batch correction and cluster by lab score 0 on this dimension.\n\n"
                 "The final weighted score will be: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 1.0). "
                 "A score of 0.6 or above is considered passing.\n\n"
                 f"Agent trajectory:\n{trajectory_raw}\n\n"
@@ -156,13 +173,15 @@ reward = 1 if (det_pass and weighted_score >= 0.6) else 0
 print(f"\nFinal reward: {reward}")
 
 out = {
-    "silhouette_check":    int(sil_check),
-    "pca_reduction_check": int(pca_check),
-    "Sreason":             Sreason,
-    "Scode":               Scode,
-    "Sresult":             Sresult,
-    "weighted_score":      weighted_score,
-    "reward":              reward,
+    "silhouette_check":        int(sil_check),
+    "pca_reduction_check":     int(pca_check),
+    "batch_independence_check": int(batch_check),
+    "batch_ari":               round(float(batch_ari), 4),
+    "Sreason":                 Sreason,
+    "Scode":                   Scode,
+    "Sresult":                 Sresult,
+    "weighted_score":          weighted_score,
+    "reward":                  reward,
 }
 with open("/logs/verifier/reward.json",       "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",        "w") as f: f.write(str(reward))

@@ -24,9 +24,9 @@ challenges:
 ## Answer
 ```json
 {
-  "macro_f1": ">0.75",
-  "per_class_f1": {"real": ">0.75", "fake": ">0.70"},
-  "per_source_f1": {"<all sources present>": "<float>"},
+  "macro_f1": ">0.82",
+  "per_class_f1": {"real": ">0.80", "fake": ">0.78"},
+  "per_source_f1": {"<all sources present>": ">0.70 each"},
   "class_imbalance_handled": true,
   "bengali_preprocessing": true
 }

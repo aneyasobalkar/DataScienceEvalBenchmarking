@@ -34,11 +34,11 @@ period    = float(results.get("period_days",              -999))
 amplitude = float(results.get("amplitude_km_s",           -999))
 systemic  = float(results.get("systemic_velocity_km_s",   -999))
 
-period_check   = bool(abs(period    - 59.9) <= 0.5)
+period_check   = bool(abs(period    - 59.9) <= 0.2)
 amplitude_check = bool(abs(amplitude - 65.0) <= 5.0)
 systemic_check  = bool(abs(systemic  - 0.5)  <= 3.0)
 
-print(f"Period:    {period:.2f} d     ->  {'PASS' if period_check   else 'FAIL'} (need 59.9 ± 0.5)")
+print(f"Period:    {period:.2f} d     ->  {'PASS' if period_check   else 'FAIL'} (need 59.9 ± 0.2)")
 print(f"Amplitude: {amplitude:.2f} km/s ->  {'PASS' if amplitude_check else 'FAIL'} (need 65.0 ± 5.0)")
 print(f"Systemic:  {systemic:.2f} km/s  ->  {'PASS' if systemic_check  else 'FAIL'} (need 0.5 ± 3.0)")
 
@@ -82,33 +82,33 @@ if det_pass:
                 "## Question\n"
                 "Given radial velocity observations of the star V723 Mon with timestamps in "
                 "Barycentric Julian Date (BJD), recover the orbital period of the binary system. "
-                "Each observation has a BJD timestamp, phase, radial velocity in km/s, and "
-                "measurement error.\n\n"
+                "The observations are clustered in 30-day windows once per year, creating strong "
+                "1-year aliases that can dominate the naive Lomb-Scargle periodogram.\n\n"
                 "## Reasoning\n"
-                "This is an unevenly sampled time series problem:\n"
-                "1. Plot RV vs BJD to understand the baseline and identify gaps\n"
-                "2. Use Lomb-Scargle periodogram which handles uneven sampling correctly — "
-                "standard FFT assumes uniform sampling and will produce aliased results\n"
-                "3. Search periods between 1-200 days — physical constraints rule out very "
-                "short or very long periods\n"
-                "4. Identify the peak in the periodogram as the candidate period\n"
-                "5. Phase-fold the data using the candidate period and verify a clean "
-                "sinusoidal curve\n"
-                "6. Fit a sinusoid to extract amplitude and systemic velocity\n"
-                "7. Check for alias periods caused by the ~400 day observational gap\n\n"
+                "This is an unevenly sampled time series with alias confusion:\n"
+                "1. Plot RV vs BJD to understand the baseline and identify seasonal gaps\n"
+                "2. Use Lomb-Scargle — standard FFT assumes uniform sampling and will fail\n"
+                "3. CRITICAL: The highest LS peak (~71.8d) is a 1-year alias, NOT the true period\n"
+                "   f_alias = f_true - 1/365.25 → P_alias ≈ 71.8d when P_true ≈ 59.9d\n"
+                "4. Phase-fold at 71.8d → shows very large scatter (chi2_nu ~ 300), not sinusoidal\n"
+                "5. The true period at ~59.9d has chi2_nu ~ 0.9 when phase-folded\n"
+                "6. Must scan chi2 across periods or do window-function analysis to find true period\n"
+                "7. Seasonal gaps (only ~30d visible per year) create a strong 1-year window function\n"
+                "   that aliases f_true into prominent fake peaks at 71.8d and 51.4d\n\n"
                 "## Answer\n"
-                '{"period_days": 59.9, "amplitude_km_s": 65.0, '
-                '"systemic_velocity_km_s": 0.5, "method": "Lomb-Scargle periodogram"}\n\n'
-                "1. Sreason (Reasoning Process, weight 0.3): Did the agent recognise this is an "
-                "unevenly sampled time series problem? Did it use Lomb-Scargle or an equivalent "
-                "method suited to irregular sampling rather than standard FFT? Did it phase-fold "
-                "to verify the period?\n\n"
-                "2. Scode (Code Steps, weight 0.3): Is the code logically coherent? Does it "
-                "correctly implement periodogram analysis, phase-folding, and sinusoidal fitting? "
-                "Does it produce meaningful intermediate plots?\n\n"
-                "3. Sresult (Final Result, weight 0.4): Are the recovered period, amplitude, and "
-                "systemic velocity physically reasonable? Are the visualizations informative? "
-                "Accept valid alternative period-finding approaches.\n\n"
+                '{"period_days": 59.94, "amplitude_km_s": 65.3, '
+                '"systemic_velocity_km_s": 1.6, "method": "Lomb-Scargle + chi2 phase-fold scan"}\n\n'
+                "1. Sreason (Reasoning Process, weight 0.3): Did the agent identify that the "
+                "highest LS peak (71.8d) is a 1-year alias, not the true period? Did it use "
+                "phase-fold quality (chi2 or RMS scatter) to discriminate between candidates? "
+                "Did it recognize the seasonal gaps as the cause of the aliasing?\n\n"
+                "2. Scode (Code Steps, weight 0.3): Does the code check phase-fold quality at "
+                "multiple candidate periods? Does it correctly implement a chi2 scan or fine-grid "
+                "optimization to locate the true period near 59.9d? Does it produce meaningful plots?\n\n"
+                "3. Sresult (Final Result, weight 0.4): Did the agent correctly identify the "
+                "period as ~59.9d (NOT the alias at 71.8d)? Agents reporting 71.8d, 51.4d, or "
+                "other aliases should score 0 on this dimension. Period must be within 0.2d of "
+                "59.9d. Amplitude ~65 km/s and systemic velocity ~1.6 km/s should match.\n\n"
                 "The final weighted score will be: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 1.0). "
                 "A score of 0.6 or above is considered passing.\n\n"
                 f"Agent trajectory:\n{trajectory_raw}\n\n"

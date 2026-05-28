@@ -32,13 +32,21 @@ except Exception as e:
 
 macro_f1     = float(results.get("macro_f1", 0))
 per_source   = results.get("per_source_f1", {})
-f1_check     = bool(macro_f1 > 0.75)
+
+f1_check     = bool(macro_f1 > 0.82)
 source_check = bool(isinstance(per_source, dict) and len(per_source) >= 3)
+# Every source must exceed the per-source floor
+source_floor_check = bool(
+    source_check and all(float(v) > 0.70 for v in per_source.values())
+)
 
-print(f"Macro F1:       {macro_f1:.4f}  ->  {'PASS' if f1_check else 'FAIL'} (need > 0.75)")
-print(f"Per-source F1:  {len(per_source)} sources  ->  {'PASS' if source_check else 'FAIL'} (need ≥ 3)")
+min_source_f1 = min((float(v) for v in per_source.values()), default=0.0)
 
-macro_f1_check = int(f1_check and source_check)
+print(f"Macro F1:            {macro_f1:.4f}  ->  {'PASS' if f1_check else 'FAIL'} (need > 0.82)")
+print(f"Per-source F1 count: {len(per_source)} sources  ->  {'PASS' if source_check else 'FAIL'} (need ≥ 3)")
+print(f"Per-source F1 floor: min={min_source_f1:.4f}  ->  {'PASS' if source_floor_check else 'FAIL'} (each source > 0.70)")
+
+macro_f1_check = int(f1_check and source_floor_check)
 
 # ── Part 2: LLM-as-judge (only if deterministic checks pass) ─────────────────
 Sreason = 0.0
@@ -95,7 +103,7 @@ if macro_f1_check:
                 "7. Per-source evaluation is essential — a model that only works on one "
                 "source is not generalizable\n\n"
                 "## Answer\n"
-                '{"macro_f1": ">0.75", "per_class_f1": {"real": ">0.75", "fake": ">0.70"}, '
+                '{"macro_f1": ">0.82", "per_class_f1": {"real": ">0.80", "fake": ">0.78"}, '
                 '"per_source_f1": {"<all sources present>": "<float>"}, '
                 '"class_imbalance_handled": true, "bengali_preprocessing": true}\n\n'
                 "1. Sreason (Reasoning Process, weight 0.3): Did the agent select appropriate "

@@ -4,7 +4,7 @@ You are a data scientist analyzing particle physics collision data from the CMS 
 
 ## Dataset
 
-The dataset contains 100,000 dielectron collision events. Each row is a single collision event with kinematic measurements for two electrons:
+The dataset contains dielectron collision events. Each row is a single collision event with kinematic measurements for two electrons:
 
 - `E1`, `E2` — energy of each electron (GeV)
 - `px1`, `px2`, `py1`, `py2`, `pz1`, `pz2` — momentum components (GeV/c)
@@ -40,7 +40,8 @@ Analyze the invariant mass distribution and identify any significant features or
   ],
   "n_peaks_identified": <int>,
   "z_boson_peak_gev": <float or null>,
-  "jpsi_peak_gev": <float or null>
+  "jpsi_peak_gev": <float or null>,
+  "upsilon_peak_gev": <float or null>
 }
 ```
 

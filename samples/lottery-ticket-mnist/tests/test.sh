@@ -43,9 +43,48 @@ non_zero_params = sum(
     for v in state_dict.values()
     if isinstance(v, torch.Tensor)
 )
-param_check = bool(non_zero_params < 50000)
+param_check = bool(non_zero_params < 20000)
 
-print(f"Non-zero params: {non_zero_params:,}  ->  {'PASS' if param_check else 'FAIL'} (need < 50,000)")
+print(f"Non-zero params: {non_zero_params:,}  ->  {'PASS' if param_check else 'FAIL'} (need < 20,000)")
+
+# Verify test accuracy by loading the model and evaluating on MNIST
+import torchvision
+import torch.nn as nn
+
+class MnistMLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(784, 300)
+        self.fc2 = nn.Linear(300, 100)
+        self.fc3 = nn.Linear(100, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 784)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return self.fc3(x)
+
+model = MnistMLP()
+model.load_state_dict(state_dict)
+model.eval()
+
+test_data = torchvision.datasets.MNIST(
+    '/data', train=False, download=False,
+    transform=torchvision.transforms.ToTensor()
+)
+loader = torch.utils.data.DataLoader(test_data, batch_size=512, shuffle=False)
+correct = total = 0
+with torch.no_grad():
+    for imgs, labels in loader:
+        preds = model(imgs).argmax(dim=1)
+        correct += (preds == labels).sum().item()
+        total += len(labels)
+test_accuracy = correct / total
+accuracy_check = bool(test_accuracy > 0.97)
+
+print(f"Test accuracy:   {test_accuracy:.4f}  ->  {'PASS' if accuracy_check else 'FAIL'} (need > 0.97)")
+
+param_check = param_check and accuracy_check
 
 # ── Part 2: LLM-as-judge ─────────────────────────────────────────────────────
 lth_implemented      = False
@@ -81,24 +120,25 @@ if param_check:
                 "## Question\n"
                 "Given the Spanish MNIST handwritten digit dataset, implement the Lottery "
                 "Ticket Hypothesis from Frankle & Carlin (2019) to find a sparse winning "
-                "ticket subnetwork that achieves greater than 95% test accuracy with fewer "
-                "than 50,000 trainable parameters.\n\n"
+                "ticket subnetwork that achieves greater than 97% test accuracy with fewer "
+                "than 20,000 non-zero parameters.\n\n"
                 "## Reasoning\n"
                 "This requires implementing the full LTH procedure — simply training a small "
                 "network from scratch does NOT satisfy the task:\n"
-                "1. Define a full dense CNN and save original weights θ0 before any training\n"
+                "1. Define a full dense MLP (fc1:784→300, fc2:300→100, fc3:100→10) and save "
+                "original weights θ0 before any training\n"
                 "2. Train the full network to convergence\n"
                 "3. Prune 20% of lowest-magnitude weights per round, creating mask m\n"
                 "4. Reset surviving weights back to θ0 — this is the critical step most "
                 "agents miss\n"
                 "5. Retrain the masked network from the reset weights\n"
-                "6. Repeat steps 3-5 until parameter count falls below 50k\n"
-                "7. Verify final network hits >95% test accuracy\n"
+                "6. Repeat steps 3-5 until parameter count falls below 20k (~12 rounds)\n"
+                "7. Verify final network hits >97% test accuracy\n"
                 "8. Weight reset to θ0 is what distinguishes a winning ticket from just "
-                "a small network\n\n"
+                "a small network — a randomly initialized 20k-param network cannot reach 97%\n\n"
                 "## Answer\n"
-                '{"test_accuracy": ">0.95", "total_parameters": "<50000", '
-                '"pruning_rounds": "5-10", "sparsity": "<0.15", "weight_reset_correct": true}\n\n'
+                '{"test_accuracy": ">0.97", "total_parameters": "<20000", '
+                '"pruning_rounds": "10-14", "sparsity": "<0.075", "weight_reset_correct": true}\n\n'
                 "The LTH procedure requires ALL of the following:\n"
                 "1. Randomly initialize a dense network and save those weights as θ0 "
                 "BEFORE any training begins.\n"

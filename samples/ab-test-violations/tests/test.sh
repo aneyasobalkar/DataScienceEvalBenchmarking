@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"srm_check":0,"recommendation_check":0,"multiple_testing_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"srm_check":0,"early_stopping_check":0,"multiple_testing_check":0,"recommendation_check":0,"Sreason":0,"Scode":0,"Sresult":0,"weighted_score":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results.json found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -32,18 +32,21 @@ except Exception as e:
     sys.exit(1)
 
 srm_detected           = results.get("srm_detected", False)
-recommendation         = str(results.get("recommendation", "")).strip().lower()
+recommendation             = str(results.get("recommendation", "")).strip().lower()
 multiple_testing_violation = results.get("multiple_testing_violation", False)
+early_stopping_detected    = results.get("early_stopping_detected", False)
 
 srm_check  = bool(srm_detected is True or srm_detected == "true")
 rec_check  = bool(recommendation == "do not ship")
 mt_check   = bool(multiple_testing_violation is True or multiple_testing_violation == "true")
+es_check   = bool(early_stopping_detected is True or early_stopping_detected == "true")
 
 print(f"SRM detected:              {srm_detected}  ->  {'PASS' if srm_check else 'FAIL'} (need true)")
-print(f"Recommendation:            {recommendation!r}  ->  {'PASS' if rec_check else 'FAIL'} (need 'do not ship')")
+print(f"Early stopping detected:   {early_stopping_detected}  ->  {'PASS' if es_check else 'FAIL'} (need true)")
 print(f"Multiple testing violation:{multiple_testing_violation}  ->  {'PASS' if mt_check else 'FAIL'} (need true)")
+print(f"Recommendation:            {recommendation!r}  ->  {'PASS' if rec_check else 'FAIL'} (need 'do not ship')")
 
-det_pass = int(srm_check and rec_check and mt_check)
+det_pass = int(srm_check and rec_check and mt_check and es_check)
 
 # ── Part 2: LLM-as-judge ─────────────────────────────────────────────────────
 Sreason = 0.0; Scode = 0.0; Sresult = 0.0
@@ -82,19 +85,19 @@ if det_pass:
                 "## Reasoning\n"
                 "This requires checking experiment validity before analyzing results:\n"
                 "1. Check for Sample Ratio Mismatch — run chi-squared test on group sizes vs expected "
-                "50/50 split. Control has 28,000 users, treatment has 22,000 — a massive deviation "
-                "(chi²=720, p≈1e-158)\n"
+                "50/50 split. Control has 25,800 users, treatment has 24,200 — groups look "
+                "roughly balanced but chi²=51.2 (p≈8e-13) reveals a real SRM\n"
                 "2. Check for early stopping — plot cumulative p-value over time. The p-value first "
-                "crosses 0.05 at day 9, indicating the experiment could have been stopped prematurely\n"
+                "crosses 0.05 at day 10, indicating the experiment could have been stopped prematurely\n"
                 "3. Check for multiple testing — 4 metrics tested. Without Bonferroni correction, "
-                "primary metric p=0.023 looks significant. After correction (α/4=0.0125), p=0.023 "
-                "> 0.0125 — not significant\n"
+                "primary metric p=0.0218 looks significant. After correction (α/4=0.0125), "
+                "p=0.0218 > 0.0125 — not significant (Bonferroni p=0.0870)\n"
                 "4. The SRM alone is sufficient to invalidate the experiment\n"
                 "5. A naive analyst just runs a t-test, sees p<0.05, and recommends shipping — wrong\n\n"
                 "## Answer\n"
-                '{"srm_detected": true, "srm_pvalue": 1.34e-158, '
+                '{"srm_detected": true, "srm_pvalue": 8.34e-13, '
                 '"early_stopping_detected": true, "multiple_testing_violation": true, '
-                '"bonferroni_corrected_pvalue": 0.0932, "recommendation": "do not ship", '
+                '"bonferroni_corrected_pvalue": 0.0870, "recommendation": "do not ship", '
                 '"reason": "experiment invalid due to sample ratio mismatch"}\n\n'
                 "1. Sreason (Reasoning Process, weight 0.3): Did the agent check experiment validity "
                 "before analyzing metric results? Did it identify all three violations (SRM, early "
@@ -151,8 +154,9 @@ print(f"\nFinal reward: {reward}")
 
 out = {
     "srm_check":              int(srm_check),
-    "recommendation_check":   int(rec_check),
+    "early_stopping_check":   int(es_check),
     "multiple_testing_check": int(mt_check),
+    "recommendation_check":   int(rec_check),
     "Sreason":                Sreason,
     "Scode":                  Scode,
     "Sresult":                Sresult,

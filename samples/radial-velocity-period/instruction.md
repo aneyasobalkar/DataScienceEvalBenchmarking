@@ -8,7 +8,7 @@ The file `/data/v723rv.csv` contains radial velocity measurements of the star V7
 - `rv_km/s` — Radial velocity measurement in km/s
 - `ðrv_km/s` — Measurement uncertainty (1-sigma error) in km/s
 
-The data is unevenly sampled — observations were taken on different nights over several years with large gaps. There are 88 observations in total.
+The data is unevenly sampled — observations were clustered in short windows of approximately 30 days per year, with large seasonal gaps between seasons. There are 55 observations spanning 4 seasons.
 
 ## Your Task
 
@@ -26,12 +26,13 @@ Because the data is unevenly sampled, standard FFT will not work. You must use a
 
 - Choose an appropriate period search range based on the data's time baseline and sampling
 - Use measurement uncertainties as weights
-- Identify the period corresponding to the highest power peak
+- Note: the seasonal observation gaps create strong 1-year aliases — the highest power peak may not be the true orbital period
 
 ### Step 3 — Phase-fold and fit a sinusoid
-- Fold the data on the recovered period
+- Fold the data on each significant candidate period and **check the quality of the fit**
 - Fit a sinusoid of the form: `A * sin(2π * phase + φ) + v_sys`
-- Extract amplitude A and systemic velocity v_sys from the fit
+- The true period should produce a significantly lower residual scatter (chi² or RMS) than alias periods
+- Extract amplitude A and systemic velocity v_sys from the best-fitting period
 
 ### Step 4 — Write results
 Write your results to `/output/results.json` in exactly this format:
@@ -45,3 +46,5 @@ Write your results to `/output/results.json` in exactly this format:
 
 ## Notes
 - All plots must be saved to `/output/plots/` before writing results.json
+- The strongest LS peak may be a window-function alias of the true period — always validate via phase-folding quality
+- The true orbital period should yield a clean sinusoidal phase-folded curve with chi²/dof ≈ 1; aliases yield chi²/dof >> 1

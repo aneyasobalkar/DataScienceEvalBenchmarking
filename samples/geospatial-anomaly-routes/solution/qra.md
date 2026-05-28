@@ -9,9 +9,11 @@ Given GPS trajectory data from delivery drivers in Beijing with `time_of_day` an
 1. Use **Haversine formula** for geographic distances — Euclidean distance on lat/lon is incorrect.
 2. Compute total path length per route by summing Haversine distances between consecutive GPS points.
 3. Snap start/end coordinates to a 0.01-degree grid (round to 2 decimal places) to identify OD pairs.
-4. **Naive z-score (OD pair only) fails completely** — confounder variance (senior drivers take 30% longer routes; evening adds 20%) creates an overall std of ~2,500 m per OD pair, pushing all anomaly z-scores to ~1.07, well below 2.0.
-5. **Stratify by OD pair × time_of_day × driver_experience** — within each stratum the std drops to ~100 m (±1%), exposing anomalies at z ≈ 4.4.
-6. Use **z > 3.5** as the detection threshold. With 20 routes per stratum, natural outliers can reach z ≈ 3.1; threshold 3.5 eliminates all false positives while anomaly z-scores of 4.4+ are clearly above it.
+4. **Discover confounders by EDA** — compare mean route lengths across time_of_day and driver_experience groups per OD pair. Senior routes are ~30% longer; evening adds ~20%.
+5. **Naive z-score (OD pair only) fails completely** — confounder variance creates an overall std of ~2,500 m per OD pair, pushing all anomaly z-scores to ~1.07, well below 2.0.
+6. **Stratify by OD pair × time_of_day × driver_experience** — within each stratum the std drops to ~100 m (±1%), exposing anomalies at z ≈ 4.4.
+7. Use **z > 3.5** as the detection threshold. With 20 routes per stratum, natural outliers can reach z ≈ 3.1; threshold 3.5 eliminates all false positives while anomaly z-scores of 4.4+ are clearly above it.
+8. Note: the instruction does NOT tell you which confounders exist — you must discover them from the data.
 
 ## Answer
 

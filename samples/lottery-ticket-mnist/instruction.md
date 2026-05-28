@@ -12,7 +12,7 @@ The winning ticket is discovered via **iterative magnitude pruning with weight r
 2. Train the network to convergence.
 3. Globally prune the 20% lowest-magnitude weights (set to exactly 0; do not remove them).
 4. **Reset the surviving weights to their values in θ₀** — NOT to random values, NOT to the current round's weights.
-5. Repeat from step 2 until the non-zero parameter count drops below 50,000.
+5. Repeat from step 2 until the non-zero parameter count drops below 20,000.
 
 ## Data
 
@@ -85,7 +85,7 @@ This network has **266,610 total parameters**.
 Stop pruning when:
 
 ```
-non_zero_params = sum((p != 0).sum().item() for p in model.parameters()) < 50000
+non_zero_params = sum((p != 0).sum().item() for p in model.parameters()) < 20000
 ```
 
 (This counts all parameters — weights AND biases.)
@@ -109,11 +109,12 @@ non_zero_params = sum((p != 0).sum().item() for p in model.parameters()) < 50000
 ## Success Criteria
 
 Your winning ticket must satisfy **both**:
-- `param_count < 50000` (non-zero parameters)
-- `test_accuracy > 0.95` (on the 10,000-sample MNIST test set)
+- `param_count < 20000` (non-zero parameters, ~7.5% density)
+- `test_accuracy > 0.97` (on the 10,000-sample MNIST test set)
 
 ## Notes
 
-- The original LTH paper achieves ~98% accuracy at ~21% parameter density on this MLP; your target of >95% at <19% density is achievable.
+- The original LTH paper achieves ~97.5% accuracy at ~7.4% parameter density on this MLP. Correct weight rewinding to θ₀ is essential — a 20k-parameter network trained from scratch cannot reliably exceed 97%.
+- Expect approximately 12 pruning rounds to reach <20k non-zero parameters.
 - Do not use GPU — run on CPU only.
 

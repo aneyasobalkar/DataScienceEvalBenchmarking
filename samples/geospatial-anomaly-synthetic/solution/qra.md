@@ -9,8 +9,9 @@ Given synthetic GPS trajectory data from delivery drivers in San Francisco with 
 1. Use **Haversine formula** for geographic distances — Euclidean distance on lat/lon is incorrect.
 2. Compute total path length per route by summing Haversine distances between consecutive GPS points.
 3. Snap start/end coordinates to a 0.01-degree grid (round to 2 decimal places) to identify OD pairs.
-4. **Naive z-score (OD pair only) fails** — confounder variance (senior 30% longer, evening 20% longer) hides anomalies; all anomaly naive z-scores ≈ 1.17, well below 2.0.
-5. **Stratify by OD pair × time_of_day × driver_experience** — within the junior×morning stratum, std drops to ~25 m (±1%), exposing anomalies at z ≈ 2.82.
+4. **Discover confounders by EDA** — compare mean route lengths across time_of_day and driver_experience groups per OD pair. Senior routes are ~30% longer; evening adds ~20%. The instruction does NOT tell you which confounders exist.
+5. **Naive z-score (OD pair only) fails** — confounder variance (senior 30% longer, evening 20% longer) hides anomalies; all anomaly naive z-scores ≈ 1.17, well below 2.0.
+6. **Stratify by OD pair × time_of_day × driver_experience** — within the junior×morning stratum, std drops to ~25 m (±1%), exposing anomalies at z ≈ 2.82.
 6. Use **z > 2.5** as the detection threshold. With 5–8 routes per stratum, the mathematical upper bound on any normal route's z-score is √(n−1) ≤ √7 ≈ 2.65; any anomaly above this bound is a genuine outlier. The window z ∈ (2.5, 2.82) gives exact match with zero false positives.
 
 ## Answer
