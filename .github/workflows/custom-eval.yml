@@ -17,6 +17,7 @@ on:
       - "samples/pharma-fee-calculator/**"
       - "samples/logistics-carrier-optimizer/**"
       - "samples/protein-phylogenetics/**"
+      - "samples/spatial-autocorrelation/**"
       - ".github/workflows/custom-eval.yml"
 
 jobs:
@@ -41,6 +42,7 @@ jobs:
           - pharma-fee-calculator
           - logistics-carrier-optimizer
           - protein-phylogenetics
+          - spatial-autocorrelation
 
     steps:
       - name: Checkout (with LFS for bengali-fake-news CSVs)
@@ -160,6 +162,7 @@ jobs:
               "pharma-fee-calculator",
               "logistics-carrier-optimizer",
               "protein-phylogenetics",
+              "spatial-autocorrelation",
           ]
 
           rows = []

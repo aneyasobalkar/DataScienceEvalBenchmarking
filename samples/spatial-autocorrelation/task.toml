@@ -1,0 +1,10 @@
+name = "spatial-autocorrelation"
+version = "0.1.0"
+description = "Compute global Moran's I for Chicago violent crime rates across 77 community areas using Queen contiguity weights and permutation test — ScienceAgentBench-inspired GIS task designed to fail on naive implementations"
+author = "aneya"
+
+[environment]
+dockerfile = "environment/Dockerfile"
+
+[solution]
+entrypoint = "solution/solve.sh"

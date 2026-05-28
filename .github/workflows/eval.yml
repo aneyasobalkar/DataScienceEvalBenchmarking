@@ -24,6 +24,7 @@ jobs:
           - pharma-fee-calculator
           - logistics-carrier-optimizer
           - protein-phylogenetics
+          - spatial-autocorrelation
 
     steps:
       - name: Checkout (with LFS for bengali-fake-news CSVs)
@@ -143,6 +144,7 @@ jobs:
               "pharma-fee-calculator",
               "logistics-carrier-optimizer",
               "protein-phylogenetics",
+              "spatial-autocorrelation",
           ]
 
           rows = []
