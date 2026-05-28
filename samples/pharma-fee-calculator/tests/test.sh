@@ -9,20 +9,21 @@ CORRECT_ANSWER="[Neurology: 4223.36, Immunology: 5934.23, Oncology: 7485.73, Rar
 if [ ! -f /app/answer.txt ]; then
     echo "Error: /app/answer.txt not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"reward":0,"agent_answer":"","correct_answer":"'"$CORRECT_ANSWER"'","reason":"answer.txt missing"}' > /logs/verifier/reward.json
+    echo '{"reward":0,"binary_reward":0,"fractional_reward":0.0,"agent_answer":"","correct_answer":"'"$CORRECT_ANSWER"'","reason":"answer.txt missing"}' > /logs/verifier/reward.json
     exit 0
 fi
 
-AGENT_ANSWER=$(cat /app/answer.txt)
+python3 - <<'PYEOF'
+import re, json, sys
 
-REWARD=$(python3 -c "
-import re, sys
-
-def normalize(s):
-    s = s.strip()
-    s = re.sub(r'\s*:\s*', ':', s)
-    s = re.sub(r'\s*,\s*', ',', s)
-    return s.lower()
+CORRECT_PAIRS = {
+    "neurology":   4223.36,
+    "immunology":  5934.23,
+    "oncology":    7485.73,
+    "rare_disease": 8169.56,
+    "cardiology":  10556.83,
+}
+CORRECT_STR = "[Neurology: 4223.36, Immunology: 5934.23, Oncology: 7485.73, Rare_Disease: 8169.56, Cardiology: 10556.83]"
 
 def parse_pairs(s):
     s = s.strip().strip('[]')
@@ -37,40 +38,42 @@ def parse_pairs(s):
                 pass
     return pairs
 
-agent_raw   = '''$AGENT_ANSWER'''
-correct_raw = '''$CORRECT_ANSWER'''
+with open("/app/answer.txt") as f:
+    agent_raw = f.read().strip()
 
-# Try exact match after normalization
-if normalize(agent_raw) == normalize(correct_raw):
-    print(1)
-    sys.exit()
+agent_pairs = parse_pairs(agent_raw)
 
-# Try numeric tolerance ±0.01
-agent_pairs   = parse_pairs(agent_raw)
-correct_pairs = parse_pairs(correct_raw)
+sub_checks = {}
+for k, v in CORRECT_PAIRS.items():
+    sub_checks[k] = int(abs(agent_pairs.get(k, float('inf')) - v) <= 0.01)
 
-if set(agent_pairs.keys()) != set(correct_pairs.keys()):
-    print(0)
-    sys.exit()
+n_correct = sum(sub_checks.values())
+reward           = 1 if n_correct == len(CORRECT_PAIRS) else 0
+binary_reward    = reward
+fractional_reward = round(n_correct / len(CORRECT_PAIRS), 4)
 
-for k in correct_pairs:
-    if abs(agent_pairs.get(k, 1e9) - correct_pairs[k]) > 0.01:
-        print(0)
-        sys.exit()
+print(f"Agent answer:   {agent_raw}")
+print(f"Correct answer: {CORRECT_STR}")
+for k, v in sub_checks.items():
+    print(f"  {k}: {'PASS' if v else 'FAIL'}")
+print(f"Correct: {n_correct}/{len(CORRECT_PAIRS)}")
+print(f"Binary reward:     {binary_reward}")
+print(f"Fractional reward: {fractional_reward}")
+print(f"Final reward: {reward}")
 
-print(1)
-")
+out = {
+    "reward":            reward,
+    "binary_reward":     binary_reward,
+    "fractional_reward": fractional_reward,
+    "agent_answer":      agent_raw,
+    "correct_answer":    CORRECT_STR,
+    **{f"{k}_check": v for k, v in sub_checks.items()},
+}
+with open("/logs/verifier/reward.json", "w") as f: json.dump(out, f, indent=2)
+with open("/logs/verifier/reward.txt",  "w") as f: f.write(str(reward))
+sys.exit(0 if reward == 1 else 1)
+PYEOF
 
-echo "Agent answer:   $AGENT_ANSWER"
-echo "Correct answer: $CORRECT_ANSWER"
-echo "Reward:         $REWARD"
-
-echo $REWARD > /logs/verifier/reward.txt
-echo "{\"reward\":$REWARD,\"agent_answer\":\"$AGENT_ANSWER\",\"correct_answer\":\"$CORRECT_ANSWER\"}" > /logs/verifier/reward.json
-
-if [ "$REWARD" = "1" ]; then
-    echo "PASS"
-else
-    echo "FAIL"
-fi
+exit_code=$?
+if [ $exit_code -eq 0 ]; then echo "PASS"; else echo "FAIL"; fi
 exit 0

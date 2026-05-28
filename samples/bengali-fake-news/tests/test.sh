@@ -162,15 +162,20 @@ if macro_f1_check:
 
 # ── Final reward ──────────────────────────────────────────────────────────────
 reward = 1 if (macro_f1_check and weighted_score >= 0.6) else 0
-print(f"\nFinal reward: {reward}")
+binary_reward = reward
+det_fraction  = round((int(f1_check) + int(source_floor_check)) / 2, 4)
+fractional_reward = round(min(weighted_score, 1.0), 4) if macro_f1_check else round(det_fraction * 0.5, 4)
+print(f"\nFinal reward: {reward}  fractional: {fractional_reward}")
 
 out = {
-    "macro_f1_check":  macro_f1_check,
-    "Sreason":         Sreason,
-    "Scode":           Scode,
-    "Sresult":         Sresult,
-    "weighted_score":  weighted_score,
-    "reward":          reward,
+    "macro_f1_check":    macro_f1_check,
+    "Sreason":           Sreason,
+    "Scode":             Scode,
+    "Sresult":           Sresult,
+    "weighted_score":    weighted_score,
+    "reward":            reward,
+    "binary_reward":     binary_reward,
+    "fractional_reward": fractional_reward,
 }
 with open("/logs/verifier/reward.json",       "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",        "w") as f: f.write(str(reward))

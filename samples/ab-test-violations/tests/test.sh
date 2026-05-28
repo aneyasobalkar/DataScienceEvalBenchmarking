@@ -150,7 +150,10 @@ if det_pass:
 
 # ── Final reward ──────────────────────────────────────────────────────────────
 reward = 1 if (det_pass and weighted_score >= 0.6) else 0
-print(f"\nFinal reward: {reward}")
+binary_reward = reward
+det_fraction  = round((int(srm_check) + int(es_check) + int(mt_check) + int(rec_check)) / 4, 4)
+fractional_reward = round(min(weighted_score, 1.0), 4) if det_pass else round(det_fraction * 0.5, 4)
+print(f"\nFinal reward: {reward}  fractional: {fractional_reward}")
 
 out = {
     "srm_check":              int(srm_check),
@@ -162,6 +165,8 @@ out = {
     "Sresult":                Sresult,
     "weighted_score":         weighted_score,
     "reward":                 reward,
+    "binary_reward":          binary_reward,
+    "fractional_reward":      fractional_reward,
 }
 with open("/logs/verifier/reward.json",        "w") as f: json.dump(out, f, indent=2)
 with open("/logs/verifier/reward.txt",         "w") as f: f.write(str(reward))

@@ -146,8 +146,15 @@ if [ "$DET_REWARD" = "1" ]; then
     reward=$(python3 -c "print(1 if float('${weighted_score:-0}') >= 6.0 else 0)")
 fi
 
+binary_reward=$reward
+fractional_reward=$(python3 -c "
+det = int('$DET_REWARD')
+ws  = float('${weighted_score:-0}')
+print(round(min(ws / 10.0, 1.0), 4) if det else 0.0)
+")
+
 echo "Sreason=$Sreason  Scode=$Scode  Sresult=$Sresult  weighted=$weighted_score"
-echo "Reward: $reward"
+echo "Reward: $reward  fractional: $fractional_reward"
 echo "$reward" > /logs/verifier/reward.txt
 cat > /logs/verifier/reward.json <<JSON
 {
@@ -157,7 +164,9 @@ cat > /logs/verifier/reward.json <<JSON
   "Sresult": $Sresult,
   "weighted_score": $weighted_score,
   "judge_reasoning": "$judge_reasoning",
-  "reward": $reward
+  "reward": $reward,
+  "binary_reward": $binary_reward,
+  "fractional_reward": $fractional_reward
 }
 JSON
 echo "$judge_reasoning" > /logs/verifier/judge_reasoning.txt

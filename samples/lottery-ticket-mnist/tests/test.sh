@@ -43,9 +43,10 @@ non_zero_params = sum(
     for v in state_dict.values()
     if isinstance(v, torch.Tensor)
 )
-param_check = bool(non_zero_params < 20000)
+non_zero_check = bool(non_zero_params < 20000)
+param_check    = non_zero_check
 
-print(f"Non-zero params: {non_zero_params:,}  ->  {'PASS' if param_check else 'FAIL'} (need < 20,000)")
+print(f"Non-zero params: {non_zero_params:,}  ->  {'PASS' if non_zero_check else 'FAIL'} (need < 20,000)")
 
 # Verify test accuracy by loading the model and evaluating on MNIST
 import torchvision
@@ -79,12 +80,12 @@ with torch.no_grad():
         preds = model(imgs).argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += len(labels)
-test_accuracy = correct / total
+test_accuracy  = correct / total
 accuracy_check = bool(test_accuracy > 0.97)
 
 print(f"Test accuracy:   {test_accuracy:.4f}  ->  {'PASS' if accuracy_check else 'FAIL'} (need > 0.97)")
 
-param_check = param_check and accuracy_check
+param_check = non_zero_check and accuracy_check
 
 # ── Part 2: LLM-as-judge ─────────────────────────────────────────────────────
 lth_implemented      = False
@@ -196,20 +197,29 @@ if param_check:
             judge_reasoning      = f"API unavailable ({e}); deterministic checks passed"
 
 # ── Final reward ──────────────────────────────────────────────────────────────
-reward = 1 if (param_check and lth_implemented and weight_reset_correct) else 0
+reward        = 1 if (param_check and lth_implemented and weight_reset_correct) else 0
+binary_reward = reward
+det_frac      = (int(non_zero_check) + int(accuracy_check)) / 2
+llm_frac      = (int(lth_implemented) + int(weight_reset_correct)) / 2
+fractional_reward = round(det_frac * 0.4 + llm_frac * 0.6, 4)
+print(f"\nFinal reward: {reward}  fractional: {fractional_reward}")
 
 result = {
-    "parameter_check":      int(param_check),
-    "lth_implemented":      int(lth_implemented),
-    "weight_reset_correct": int(weight_reset_correct),
-    "reward":               reward
+    "parameter_check":       int(param_check),
+    "non_zero_check":        int(non_zero_check),
+    "accuracy_check":        int(accuracy_check),
+    "lth_implemented":       int(lth_implemented),
+    "weight_reset_correct":  int(weight_reset_correct),
+    "reward":                reward,
+    "binary_reward":         binary_reward,
+    "fractional_reward":     fractional_reward,
 }
 
 with open('/logs/verifier/reward.json', 'w') as f: json.dump(result, f, indent=2)
 with open('/logs/verifier/judge_reasoning.txt', 'w') as f: f.write(judge_reasoning)
 with open('/logs/verifier/reward.txt',  'w') as f: f.write(str(reward))
 
-print(f"\nFinal reward: {reward}")
+print(f"Final reward: {reward}")
 sys.exit(0 if reward == 1 else 1)
 PYEOF
 
