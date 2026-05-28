@@ -10,6 +10,10 @@ on:
       - "samples/gene-expression-clustering/**"
       - "samples/lottery-ticket-mnist/**"
       - "samples/radial-velocity-period/**"
+      - "samples/simpsons-paradox/**"
+      - "samples/ab-test-violations/**"
+      - "samples/geospatial-anomaly-routes/**"
+      - "samples/geospatial-anomaly-synthetic/**"
       - ".github/workflows/custom-eval.yml"
 
 jobs:
@@ -27,6 +31,10 @@ jobs:
           - gene-expression-clustering
           - lottery-ticket-mnist
           - radial-velocity-period
+          - simpsons-paradox
+          - ab-test-violations
+          - geospatial-anomaly-routes
+          - geospatial-anomaly-synthetic
         trial: [1, 2, 3]
 
     steps:
@@ -40,11 +48,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install system dependencies
+        run: sudo apt-get install -y tmux
+
       - name: Install harbor
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install --quiet harbor==0.8.0
+          pip install --quiet harbor==0.8.0 asciinema
 
       - name: Run harbor eval
         env:
