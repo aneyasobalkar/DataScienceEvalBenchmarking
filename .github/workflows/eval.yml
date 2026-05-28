@@ -24,7 +24,7 @@ jobs:
           source .venv/bin/activate
           pip install harbor asciinema
 
-      - name: Run all trials
+      - name: Run all tasks
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -37,14 +37,13 @@ jobs:
             samples/ab-test-violations \
             samples/geospatial-anomaly-routes \
             samples/geospatial-anomaly-synthetic; do
-            for trial in 1 2 3; do
-              echo "=== $task trial $trial ==="
-              harbor run -p "$task" \
-                -a terminus-2 \
-                -m gemini/gemini-2.0-flash \
-                --ae GEMINI_API_KEY="$GEMINI_API_KEY" \
-                -y || true
-            done
+            echo "=== $task ==="
+            harbor run -p "$task" \
+              -a terminus-2 \
+              -m gemini/gemini-3.5-flash \
+              --ae GEMINI_API_KEY="$GEMINI_API_KEY" \
+              -n 3 \
+              -y || true
           done
 
       - name: Upload results
