@@ -1,0 +1,10 @@
+name = "logistics-carrier-optimizer"
+version = "0.1.0"
+description = "Multi-step carrier cost optimization requiring cross-referencing shipment data with carrier contracts and zone lookups — weight break ordering and carrier-specific surcharges are the key traps — DABstep-style hard task"
+author = "aneya"
+
+[environment]
+dockerfile = "environment/Dockerfile"
+
+[solution]
+entrypoint = "solution/solve.sh"

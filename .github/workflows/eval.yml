@@ -5,13 +5,34 @@ on:
 
 jobs:
   eval:
+    name: "${{ matrix.task }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        task:
+          - bengali-fake-news
+          - cern-resonance-peaks
+          - gene-expression-clustering
+          - lottery-ticket-mnist
+          - radial-velocity-period
+          - simpsons-paradox
+          - ab-test-violations
+          - geospatial-anomaly-routes
+          - geospatial-anomaly-synthetic
+          - pharma-fee-calculator
+          - logistics-carrier-optimizer
+          - protein-phylogenetics
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (with LFS for bengali-fake-news CSVs)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -22,33 +43,158 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install harbor asciinema
+          pip install --quiet harbor==0.8.0 asciinema
 
-      - name: Run all tasks
+      - name: Run harbor eval
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           source .venv/bin/activate
-          for task in \
-            samples/dabstep-* \
-            samples/radial-velocity-period \
-            samples/lottery-ticket-mnist \
-            samples/simpsons-paradox \
-            samples/ab-test-violations \
-            samples/geospatial-anomaly-routes \
-            samples/geospatial-anomaly-synthetic; do
-            echo "=== $task ==="
-            harbor run -p "$task" \
-              -a terminus-2 \
-              -m gemini/gemini-3.5-flash \
-              --ae GEMINI_API_KEY="$GEMINI_API_KEY" \
-              -k 3 \
-              -y || true
-          done
+          harbor run \
+            -p "samples/${{ matrix.task }}" \
+            -a terminus-2 \
+            -m gemini/gemini-3.5-flash \
+            -k 3 \
+            -y
 
-      - name: Upload results
+      - name: Compute pass@1 / pass@3
+        if: always()
+        shell: python3 {0}
+        run: |
+          import os, glob, pathlib
+
+          task = "${{ matrix.task }}"
+          reward_files = sorted(glob.glob("jobs/**/reward.txt", recursive=True))
+          rewards = []
+          for f in reward_files:
+              try:
+                  rewards.append(int(pathlib.Path(f).read_text().strip()))
+              except Exception:
+                  pass
+
+          attempts = len(rewards)
+          passes   = sum(rewards)
+          pass3    = 1 if passes > 0 else 0
+          p1       = f"{passes/attempts:.0%}" if attempts > 0 else "N/A"
+          detail   = " ".join("✅" if r else "❌" for r in rewards) or "(no results)"
+
+          lines = [
+              f"## {task}",
+              "",
+              f"| Metric   | Value |",
+              f"|----------|-------|",
+              f"| Attempts | {attempts} |",
+              f"| Passes   | {passes} / {attempts} |",
+              f"| Results  | {detail} |",
+              f"| pass@1   | {p1} |",
+              f"| pass@3   | {'✅' if pass3 else '❌'} |",
+              "",
+          ]
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if summary_path:
+              with open(summary_path, "a") as fh:
+                  fh.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+
+          # Save row for the aggregate summarize job
+          os.makedirs("jobs", exist_ok=True)
+          with open("jobs/task_result.csv", "w") as fh:
+              fh.write(f"{task},{attempts},{passes}\n")
+
+      - name: Upload job results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: eval-results
+          name: results-${{ matrix.task }}
           path: jobs/
+          retention-days: 30
+          if-no-files-found: warn
+
+  summarize:
+    name: "Aggregate pass@1 / pass@3"
+    runs-on: ubuntu-latest
+    needs: eval
+    if: always()
+    steps:
+      - name: Download all task artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: artifacts/
+          merge-multiple: false
+
+      - name: Compute aggregate metrics
+        shell: python3 {0}
+        run: |
+          import os, glob, pathlib
+
+          tasks = [
+              "bengali-fake-news",
+              "cern-resonance-peaks",
+              "gene-expression-clustering",
+              "lottery-ticket-mnist",
+              "radial-velocity-period",
+              "simpsons-paradox",
+              "ab-test-violations",
+              "geospatial-anomaly-routes",
+              "geospatial-anomaly-synthetic",
+              "pharma-fee-calculator",
+              "logistics-carrier-optimizer",
+              "protein-phylogenetics",
+          ]
+
+          rows = []
+          total_attempts = 0
+          total_passes   = 0
+          total_pass3    = 0
+
+          for task in tasks:
+              csv_path = pathlib.Path(f"artifacts/results-{task}/task_result.csv")
+              if csv_path.exists():
+                  parts    = csv_path.read_text().strip().split(",")
+                  attempts = int(parts[1])
+                  passes   = int(parts[2])
+              else:
+                  # Fallback: search for reward.txt directly
+                  rfs = glob.glob(f"artifacts/results-{task}/**/reward.txt", recursive=True)
+                  vals = []
+                  for rf in rfs:
+                      try:
+                          vals.append(int(pathlib.Path(rf).read_text().strip()))
+                      except Exception:
+                          pass
+                  attempts = len(vals)
+                  passes   = sum(vals)
+
+              pass3 = 1 if passes > 0 else 0
+              p1    = f"{passes/attempts:.0%}" if attempts > 0 else "—"
+              rows.append((task, attempts, passes, p1, pass3))
+              total_attempts += attempts
+              total_passes   += passes
+              total_pass3    += pass3
+
+          agg_p1 = f"{total_passes/total_attempts:.0%}" if total_attempts > 0 else "—"
+          agg_p3 = f"{total_pass3}/{len(tasks)}"
+
+          lines = [
+              "# Aggregate Eval Results",
+              "",
+              "| Task | Attempts | Passes | pass@1 | pass@3 |",
+              "|---|---|---|---|---|",
+          ]
+          for task, attempts, passes, p1, pass3 in rows:
+              lines.append(f"| {task} | {attempts} | {passes} | {p1} | {'✅' if pass3 else '❌'} |")
+          lines += [
+              f"| **TOTAL** | **{total_attempts}** | **{total_passes}** | **{agg_p1}** | **{agg_p3}** |",
+              "",
+              f"**Aggregate pass@1** (avg single-attempt success rate): {agg_p1}",
+              f"**Aggregate pass@3** (tasks with ≥1 pass out of 3): {agg_p3}",
+          ]
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if summary_path:
+              with open(summary_path, "w") as fh:
+                  fh.write("\n".join(lines) + "\n")
+          print("\n".join(lines))

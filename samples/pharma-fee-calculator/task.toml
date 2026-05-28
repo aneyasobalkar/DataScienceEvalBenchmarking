@@ -1,0 +1,10 @@
+name = "pharma-fee-calculator"
+version = "0.1.0"
+description = "Multi-step fee delta calculation requiring cross-referencing clinical trial data with billing documentation containing implicit composite fee rules — DABstep-style hard task"
+author = "aneya"
+
+[environment]
+dockerfile = "environment/Dockerfile"
+
+[solution]
+entrypoint = "solution/solve.sh"

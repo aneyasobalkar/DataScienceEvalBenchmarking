@@ -1,0 +1,10 @@
+name = "protein-phylogenetics"
+version = "0.1.0"
+description = "Find the two most evolutionarily distant proteins from 20 lysozyme C sequences using BLOSUM62 pairwise alignment — BixBench-inspired bioinformatics task requiring correct substitution matrix and distance formula"
+author = "aneya"
+
+[environment]
+dockerfile = "environment/Dockerfile"
+
+[solution]
+entrypoint = "solution/solve.sh"
