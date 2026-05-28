@@ -69,7 +69,7 @@ judge_reasoning = "Deterministic checks failed — LLM judge skipped"
 if det_pass:
     trajectory_path = "/logs/agent/trajectory.json"
     if not os.path.exists(trajectory_path):
-        Sreason = 8.0; Scode = 8.0; Sresult = 8.0
+        Sreason = 0.8; Scode = 0.8; Sresult = 0.8
         weighted_score = round(Sreason*0.3 + Scode*0.3 + Sresult*0.4, 4)
         judge_reasoning = "No agent trajectory — judge skipped (oracle/nop run)"
         print("LLM judge: skipped (no trajectory)")
@@ -87,7 +87,7 @@ if det_pass:
                 "You are evaluating a data science agent on a geospatial anomaly detection task. "
                 "The agent must identify anomalous GPS delivery routes in San Francisco by using "
                 "correct geospatial distance methods and comparing routes by origin-destination pair.\n\n"
-                "Score the agent on three dimensions, each 0-10:\n\n"
+                "Score the agent on three dimensions, each 0-1:\n\n"
                 "QRA Reference:\n\n"
                 "## Question\n"
                 "Given GPS trajectory data from delivery drivers in San Francisco, identify which "
@@ -120,12 +120,12 @@ if det_pass:
                 f"Agent detected: {len(predicted_set)} routes, {N_GT} correct, {n_fp} false positives. "
                 "A naive agent using Euclidean distance would still likely find most anomalies since "
                 "the detours are extreme — the key distinction is correctly declaring 'haversine'.\n\n"
-                "The final weighted score: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 10.0). "
-                "A score >= 6.0 is passing.\n\n"
+                "The final weighted score: Sreason*0.3 + Scode*0.3 + Sresult*0.4 (max 1.0). "
+                "A score >= 0.6 is passing.\n\n"
                 f"Agent trajectory:\n{trajectory_raw}\n\n"
                 f"Agent results:\n{results_str}\n\n"
                 "Respond with JSON only, no other text:\n"
-                '{"Sreason": <0-10>, "Scode": <0-10>, "Sresult": <0-10>, "reasoning": "<two sentences>"}'
+                '{"Sreason": <0-1>, "Scode": <0-1>, "Sresult": <0-1>, "reasoning": "<two sentences>"}'
             )
 
             api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -151,17 +151,17 @@ if det_pass:
             judge_reasoning = judge_result.get("reasoning", "")
 
             print(f"Sreason: {Sreason}  Scode: {Scode}  Sresult: {Sresult}")
-            print(f"Weighted: {weighted_score:.4f}  ->  {'PASS' if weighted_score >= 6.0 else 'FAIL'}")
+            print(f"Weighted: {weighted_score:.4f}  ->  {'PASS' if weighted_score >= 0.6 else 'FAIL'}")
             print(f"Judge: {judge_reasoning}")
 
         except Exception as e:
             print(f"LLM judge failed ({e}) — falling back")
-            Sreason = 8.0; Scode = 8.0; Sresult = 8.0
+            Sreason = 0.8; Scode = 0.8; Sresult = 0.8
             weighted_score = round(Sreason*0.3 + Scode*0.3 + Sresult*0.4, 4)
             judge_reasoning = f"API unavailable ({e}); deterministic checks passed"
 
 # ── Final reward ───────────────────────────────────────────────────────────────
-reward = 1 if (det_pass and weighted_score >= 6.0) else 0
+reward = 1 if (det_pass and weighted_score >= 0.6) else 0
 print(f"\nFinal reward: {reward}")
 
 out = {
