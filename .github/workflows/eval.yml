@@ -42,7 +42,7 @@ jobs:
               -a terminus-2 \
               -m gemini/gemini-3.5-flash \
               --ae GEMINI_API_KEY="$GEMINI_API_KEY" \
-              -n 3 \
+              -k 3 \
               -y || true
           done
 
