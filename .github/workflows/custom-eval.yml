@@ -18,7 +18,7 @@ on:
 
 jobs:
   eval:
-    name: "${{ matrix.task }} · trial ${{ matrix.trial }}"
+    name: "${{ matrix.task }}"
     runs-on: ubuntu-latest
     # lottery-ticket-mnist: ~30 min agent + ~15 min Docker build + overhead
     timeout-minutes: 90
@@ -35,7 +35,6 @@ jobs:
           - ab-test-violations
           - geospatial-anomaly-routes
           - geospatial-anomaly-synthetic
-        trial: [1, 2, 3]
 
     steps:
       - name: Checkout (with LFS for bengali-fake-news CSVs)
@@ -67,13 +66,14 @@ jobs:
             -p "samples/${{ matrix.task }}" \
             -a terminus-2 \
             -m gemini/gemini-3.5-flash \
+            -n 3 \
             -y
 
       - name: Upload job results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-${{ matrix.task }}-trial${{ matrix.trial }}
+          name: results-${{ matrix.task }}
           path: jobs/
           retention-days: 30
           if-no-files-found: warn
