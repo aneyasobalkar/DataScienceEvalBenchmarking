@@ -27,7 +27,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           source .venv/bin/activate
-          for task in samples/dabstep-* samples/radial-velocity-period samples/lottery-ticket-mnist; do
+          for task in samples/dabstep-* samples/radial-velocity-period samples/lottery-ticket-mnist samples/simpsons-paradox samples/ab-test-violations samples/geospatial-anomaly-routes samples/geospatial-anomaly-synthetic; do
             for trial in 1 2 3; do
               echo "=== $task trial $trial ==="
               harbor run -p "$task" -a terminus-2 -m gemini/gemini-3.5-flash -y || true
