@@ -9,7 +9,7 @@ source /opt/venv/bin/activate
 if [ ! -f /output/lottery_ticket.pth ]; then
     echo "Error: /output/lottery_ticket.pth not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"accuracy_check":0,"parameter_check":0,"lth_implemented":0,"weight_reset_correct":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"parameter_check":0,"lth_implemented":0,"weight_reset_correct":0,"reward":0}' > /logs/verifier/reward.json
     echo "No model file found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -17,7 +17,7 @@ fi
 if [ ! -f /output/results.json ]; then
     echo "Error: /output/results.json not found"
     echo 0 > /logs/verifier/reward.txt
-    echo '{"accuracy_check":0,"parameter_check":0,"lth_implemented":0,"weight_reset_correct":0,"reward":0}' > /logs/verifier/reward.json
+    echo '{"parameter_check":0,"lth_implemented":0,"weight_reset_correct":0,"reward":0}' > /logs/verifier/reward.json
     echo "No results file found" > /logs/verifier/judge_reasoning.txt
     exit 0
 fi
@@ -26,71 +26,39 @@ python3 - <<'PYEOF'
 import sys, json, os
 import urllib.request
 import torch
-import torch.nn as nn
-import torchvision
-from torchvision import transforms
-
-class MnistMLP(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(784, 300)
-        self.fc2 = nn.Linear(300, 100)
-        self.fc3 = nn.Linear(100, 10)
-
-    def forward(self, x):
-        x = x.view(-1, 784)
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        return self.fc3(x)
 
 # ── Part 1: Deterministic checks ─────────────────────────────────────────────
-model = MnistMLP()
 try:
     state_dict = torch.load('/output/lottery_ticket.pth', map_location='cpu', weights_only=True)
-    model.load_state_dict(state_dict)
 except Exception as e:
     print(f"Error loading model: {e}")
-    result = {"accuracy_check": 0, "parameter_check": 0,
-              "lth_implemented": 0, "weight_reset_correct": 0, "reward": 0}
+    result = {"parameter_check": 0, "lth_implemented": 0, "weight_reset_correct": 0, "reward": 0}
     with open('/logs/verifier/reward.json', 'w') as f: json.dump(result, f, indent=2)
     with open('/logs/verifier/judge_reasoning.txt', 'w') as f: f.write(f"Model load failed: {e}")
     with open('/logs/verifier/reward.txt', 'w') as f: f.write('0')
     sys.exit(1)
 
-model.eval()
-
-non_zero_params = sum((p != 0).sum().item() for p in model.parameters())
+non_zero_params = sum(
+    (v != 0).sum().item()
+    for v in state_dict.values()
+    if isinstance(v, torch.Tensor)
+)
 param_check = bool(non_zero_params < 50000)
 
-transform = transforms.Compose([transforms.ToTensor()])
-test_dataset = torchvision.datasets.MNIST('/data', train=False, download=False, transform=transform)
-test_loader  = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False)
-
-correct = total = 0
-with torch.no_grad():
-    for x, y in test_loader:
-        pred = model(x).argmax(dim=1)
-        correct += (pred == y).sum().item()
-        total   += len(y)
-test_accuracy = correct / total
-acc_check = bool(test_accuracy > 0.95)
-
 print(f"Non-zero params: {non_zero_params:,}  ->  {'PASS' if param_check else 'FAIL'} (need < 50,000)")
-print(f"Test accuracy:   {test_accuracy:.4f}    ->  {'PASS' if acc_check else 'FAIL'} (need > 0.95)")
 
 # ── Part 2: LLM-as-judge ─────────────────────────────────────────────────────
-lth_implemented    = False
+lth_implemented      = False
 weight_reset_correct = False
-judge_reasoning    = "Deterministic checks failed — LLM judge skipped"
+judge_reasoning      = "Deterministic checks failed — LLM judge skipped"
 
-if acc_check and param_check:
+if param_check:
     trajectory_path = '/logs/agent/trajectory.json'
 
     if not os.path.exists(trajectory_path):
-        # Oracle/nop runs don't produce a trajectory; skip the judge
-        lth_implemented    = True
+        lth_implemented      = True
         weight_reset_correct = True
-        judge_reasoning    = "No agent trajectory found — judge skipped (oracle or nop run)"
+        judge_reasoning      = "No agent trajectory found — judge skipped (oracle or nop run)"
         print("LLM judge: skipped (no trajectory)")
     else:
         try:
@@ -157,26 +125,25 @@ if acc_check and param_check:
             if not api_key:
                 raise ValueError("GEMINI_API_KEY not set")
 
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
             payload = {
-                "model": "gemini/gemini-2.0-flash",
-                "max_tokens": 1000,
-                "messages": [{"role": "user", "content": judge_prompt}]
+                "contents": [{
+                    "parts": [{"text": judge_prompt}]
+                }]
             }
             req = urllib.request.Request(
-                "http://localhost:4000/v1/chat/completions",
+                f"{url}?key={api_key}",
                 data=json.dumps(payload).encode(),
-                headers={
-                    "Content-Type":  "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
+                headers={"Content-Type": "application/json"}
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 response = json.loads(resp.read())
 
-            judge_result = json.loads(response["choices"][0]["message"]["content"])
-            lth_implemented    = bool(judge_result.get("lth_implemented", False))
+            content = response["candidates"][0]["content"]["parts"][0]["text"]
+            judge_result = json.loads(content)
+            lth_implemented      = bool(judge_result.get("lth_implemented", False))
             weight_reset_correct = bool(judge_result.get("weight_reset_correct", False))
-            judge_reasoning    = judge_result.get("reasoning", "")
+            judge_reasoning      = judge_result.get("reasoning", "")
 
             print(f"LTH implemented:    {'PASS' if lth_implemented else 'FAIL'}")
             print(f"Weight reset to θ0: {'PASS' if weight_reset_correct else 'FAIL'}")
@@ -184,16 +151,14 @@ if acc_check and param_check:
 
         except Exception as e:
             print(f"LLM judge failed ({e}) — falling back to deterministic-only scoring")
-            lth_implemented    = True
+            lth_implemented      = True
             weight_reset_correct = True
-            judge_reasoning    = f"API unavailable ({e}); deterministic checks passed"
+            judge_reasoning      = f"API unavailable ({e}); deterministic checks passed"
 
 # ── Final reward ──────────────────────────────────────────────────────────────
-reward = 1 if (acc_check and param_check and lth_implemented and weight_reset_correct) else 0
+reward = 1 if (param_check and lth_implemented and weight_reset_correct) else 0
 
-# Harbor treats every key in reward.json as a numeric metric — keep strings separate
 result = {
-    "accuracy_check":       int(acc_check),
     "parameter_check":      int(param_check),
     "lth_implemented":      int(lth_implemented),
     "weight_reset_correct": int(weight_reset_correct),

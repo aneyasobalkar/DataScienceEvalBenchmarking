@@ -119,23 +119,22 @@ if det_pass:
             if not api_key:
                 raise ValueError("GEMINI_API_KEY not set")
 
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
             payload = {
-                "model": "gemini/gemini-2.0-flash",
-                "max_tokens": 1000,
-                "messages": [{"role": "user", "content": judge_prompt}]
+                "contents": [{
+                    "parts": [{"text": judge_prompt}]
+                }]
             }
             req = urllib.request.Request(
-                "http://localhost:4000/v1/chat/completions",
+                f"{url}?key={api_key}",
                 data=json.dumps(payload).encode(),
-                headers={
-                    "Content-Type":  "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
+                headers={"Content-Type": "application/json"}
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 response = json.loads(resp.read())
 
-            judge_result = json.loads(response["choices"][0]["message"]["content"])
+            content = response["candidates"][0]["content"]["parts"][0]["text"]
+            judge_result = json.loads(content)
             Sreason = float(judge_result.get("Sreason", 0))
             Scode   = float(judge_result.get("Scode",   0))
             Sresult = float(judge_result.get("Sresult", 0))

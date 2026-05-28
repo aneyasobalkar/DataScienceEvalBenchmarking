@@ -1,0 +1,15 @@
+{
+  "experiment_name": "checkout_flow_v2",
+  "start_date": "2023-01-01",
+  "end_date": "2023-01-14",
+  "expected_split": 0.5,
+  "primary_metric": "converted",
+  "secondary_metrics": [
+    "revenue",
+    "page_views",
+    "session_duration"
+  ],
+  "minimum_detectable_effect": 0.01,
+  "target_power": 0.8,
+  "significance_level": 0.05
+}

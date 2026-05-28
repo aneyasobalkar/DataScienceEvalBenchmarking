@@ -16,6 +16,8 @@ TASKS=(
   dabstep-2641
   dabstep-2710
   dabstep-2764
+  radial-velocity-period
+  lottery-ticket-mnist
 )
 
 SUMMARY_FILE="eval_summary.txt"
